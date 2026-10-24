@@ -197,12 +197,12 @@ def send(text, dry):
 def msg_new(s, cfg):
     long_ = s["side"] == 1
     d, icon = ("LONG (BUY)", "🟢") if long_ else ("SHORT (SELL)", "🔴")
-    sp, tp_ = abs(s["stop"] / s["entry"] - 1) * 100, abs(s["tp"] / s["entry"] - 1) * 100
+    sp, tp_ = (s["stop"] / s["entry"] - 1) * 100, (s["tp"] / s["entry"] - 1) * 100   # signed: short stop is ABOVE entry
     dl = pd.Timestamp(s["deadline"]).strftime("%d %b %H:%M UTC")
     return (f"{icon} <b>NAYA SIGNAL: {d} {html.escape(s['symbol'])}</b>\n\n"
             f"1️⃣ <b>Entry:</b> abhi market price par {'buy' if long_ else 'sell/short'} karo (≈ <code>{fmt(s['entry'])}</code>)\n"
-            f"2️⃣ <b>Stop-loss</b> foran lagao: <code>{fmt(s['stop'])}</code> (-{sp:.1f}%)\n"
-            f"3️⃣ <b>Take-profit</b> lagao: <code>{fmt(s['tp'])}</code> (+{tp_:.1f}%)\n"
+            f"2️⃣ <b>Stop-loss</b> foran lagao: <code>{fmt(s['stop'])}</code> ({sp:+.1f}%)\n"
+            f"3️⃣ <b>Take-profit</b> lagao: <code>{fmt(s['tp'])}</code> ({tp_:+.1f}%)\n"
             f"4️⃣ <b>Deadline:</b> {dl} tak stop ya target na lage to position khud band kar do\n\n"
             f"💰 Risk: account ka {s['risk_pct']}% → position ≈ {s['size_pct']}% of account ({s['size_pct'] / 100:.2f}x)\n"
             f"Stop-loss ya target lagte hi position khud band ho jati hai. Bot khud trade nahi karta."
@@ -297,7 +297,10 @@ def main():
             if any(x["status"] == "open" and x["coin"] == coin for x in signals):
                 continue
             open_risk = sum(x["risk_pct"] for x in signals if x["status"] == "open")
-            sig, note = (new_signal(coin, group, mult, df, cfg, open_risk) if check_close else (None, None))   # 2) new signal?
+            fresh = (now - (df.index[-1] + pd.Timedelta(minutes=TF_MIN[cfg["timeframe"]]))) <= pd.Timedelta(hours=2)
+            if check_close and not fresh:
+                run["notes"].append(f"{coin}: last 4h candle closed more than 2h ago - no new close-signal check")
+            sig, note = (new_signal(coin, group, mult, df, cfg, open_risk) if (check_close and fresh) else (None, None))   # 2) new signal?
             if sig is None and note is None and check_early:
                 sig, note = early_signal(coin, group, mult, df, df15, cfg, open_risk)
             if note:

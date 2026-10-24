@@ -2,7 +2,7 @@ name: signal-bot
 
 on:
   schedule:
-    - cron: "6 0,4,8,12,16,20 * * *"   # 6 minutes after each 4h candle closes (UTC)
+    - cron: "6 * * * *"   # hourly at :06 (GitHub often delays/skips scheduled runs; the bot only acts on a fresh 4h candle)
   workflow_dispatch: {}                   # "Run workflow" button for manual runs
 
 permissions:

@@ -69,7 +69,7 @@ button.theme{background:var(--card);border:1px solid var(--line);color:var(--mut
 <body>
 <main>
 <div class="top">
-  <div><h1>Signal Desk</h1><div class="sub" id="status">Loading…</div></div>
+  <div><h1>Signal Desk</h1><div class="sub" id="status">Loading…</div><div class="sub" id="live"></div></div>
   <button class="theme" id="theme" type="button">Theme</button>
 </div>
 
@@ -122,7 +122,7 @@ const sgn = x => (x > 0 ? '+' : '') + x;
 const dt = iso => new Date(iso).toISOString().slice(0,16).replace('T',' ') + ' UTC';
 const dur = ms => { const m = Math.max(0, Math.round(ms/60000)); return m < 60 ? m + ' min' : m < 2880 ? Math.floor(m/60) + ' ghante ' + (m%60) + ' min' : Math.floor(m/1440) + ' din ' + Math.floor(m%1440/60) + ' ghante'; };
 const HOSTS = ['https://api.binance.com', 'https://data-api.binance.vision'];
-let S = null, live = {}, klines = {};
+let S = null, live = {}, klines = {}, liveAt = null;
 
 try { const t = localStorage.getItem('theme'); if (t) document.documentElement.dataset.theme = t; } catch(e) {}
 $('theme').onclick = () => {
@@ -230,15 +230,15 @@ function renderOpen() {
   $('open').innerHTML = open.map(s => {
     const long = s.side === 1, px = live[s.coin] ?? s.last_price, r = pnlR(s, px), v = verdict(r, s);
     const left = s.deadline ? dur(new Date(s.deadline) - Date.now()) : '';
-    const sp = Math.abs(s.stop / s.entry - 1) * 100, tpp = Math.abs(s.tp / s.entry - 1) * 100;
+    const sp = (s.stop / s.entry - 1) * 100, tpp = (s.tp / s.entry - 1) * 100;
     const num = (n) => `<span class="val" data-copy="${raw(n)}" title="Copy">${fmt(n)}</span>`;
     return `<div class="card sig">
       <div class="sig-h ${long?'long':'short'}"><span class="coin">${esc(s.coin)}${s.mode==='early'?' <span class="badge" title="4h candle abhi band nahi hui - false signal ka chance zyada">⚡ JALDI</span>':''}</span><span class="side ${long?'up':'dn'}">${long?'LONG - BUY':'SHORT - SELL'}</span></div>
       <div class="pnl ${v[2]}">${v[0]} · ${sgn(r.toFixed(2))}R<small>${v[1]}${live[s.coin]?'':' (price = aakhri candle close)'}</small></div>
       <ol class="steps">
         <li><div><b>Entry lo</b>Abhi market price par ${long?'buy':'sell (short)'} karo ${num(s.entry)}</div></li>
-        <li><div><b>Stop-loss lagao (zaroori!)</b>Entry ke saath hi: ${num(s.stop)} <span class="sub">(-${sp.toFixed(1)}% · yahan band = nuksan -1R)</span></div></li>
-        <li><div><b>Take-profit lagao</b>${num(s.tp)} <span class="sub">(+${tpp.toFixed(1)}% · yahan band = profit +${s.tp_r}R)</span></div></li>
+        <li><div><b>Stop-loss lagao (zaroori!)</b>Entry ke saath hi: ${num(s.stop)} <span class="sub">(${sgn(sp.toFixed(1))}% · yahan band = nuksan -1R)</span></div></li>
+        <li><div><b>Take-profit lagao</b>${num(s.tp)} <span class="sub">(${sgn(tpp.toFixed(1))}% · yahan band = profit +${s.tp_r}R)</span></div></li>
         <li><div><b>Deadline</b>${s.deadline ? dt(s.deadline) + ` (${left} baqi)` : ''}. Tab tak dono na lagen to position khud band kar do.</div></li>
       </ol>
       <div class="sub" style="padding:0 16px 8px">Risk: account ka ${s.risk_pct}% → position ≈ ${s.size_pct}% of account (${(s.size_pct/100).toFixed(2)}x leverage). Numbers par click karo = copy.</div>
@@ -315,7 +315,7 @@ function renderWatch() {
 
 async function refreshPrices() {
   if (!S) return;
-  const coins = [...new Set(S.signals.filter(s => s.status === 'open').map(s => s.coin))];
+  const coins = [...new Set([...S.signals.filter(x => x.status === 'open').map(x => x.coin), ...Object.keys(S.radar || {})])];
   if (!coins.length) return;
   const q = encodeURIComponent(JSON.stringify(coins.map(c => c + 'USDT')));
   for (const host of HOSTS) {
@@ -323,9 +323,14 @@ async function refreshPrices() {
       const r = await fetch(`${host}/api/v3/ticker/price?symbols=${q}`);
       if (!r.ok) continue;
       (await r.json()).forEach(x => live[x.symbol.replace('USDT','')] = parseFloat(x.price));
-      renderOpen(); renderRadar(); return;
+      liveAt = new Date(); renderOpen(); renderRadar(); showLive(); return;
     } catch (e) {}
   }
+  liveAt = null; showLive();
+}
+function showLive() {
+  const el = $('live'); if (!el) return;
+  el.innerHTML = liveAt ? `<span class="up">● live price</span> (${liveAt.toLocaleTimeString()}, har 15 sec)` : '<span class="warn">● live price nahi mil rahi</span> - bot ki aakhri candle ki price dikh rahi hai';
 }
 load(); setInterval(refreshPrices, 15000); setInterval(load, 5 * 60000);
 </script>
