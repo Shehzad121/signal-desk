@@ -286,7 +286,8 @@ def main():
             n = cfg["strategy"]["n"]               # "radar": how far is each coin from triggering a signal?
             ema200 = float(df["close"].ewm(span=200, adjust=False).mean().iloc[-1])
             radar[coin] = dict(price=float(df["close"].iloc[-1]), ema200=ema200, trend="up" if df["close"].iloc[-1] > ema200 else "down",
-                               long_trigger=float(df["high"].iloc[-n:].max()), short_trigger=float(df["low"].iloc[-n:].min()))
+                               long_trigger=float(df["high"].iloc[-n:].max()), short_trigger=float(df["low"].iloc[-n:].min()),
+                               atr=float(atr(df).iloc[-1]))
             for s_ in signals:                     # 1) update open signals of this coin
                 if s_["status"] == "open" and s_["coin"] == coin:
                     s_.update(evaluate(s_, df15 if s_.get("tf") == "15m" else df, cfg))

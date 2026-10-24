@@ -52,6 +52,17 @@ select{background:var(--card);color:var(--ink);border:1px solid var(--line);bord
 details{margin-top:14px}summary{cursor:pointer;font-weight:650}
 details ol{margin:10px 0 0;padding-left:20px}details li{margin:6px 0}
 button.theme{background:var(--card);border:1px solid var(--line);color:var(--mute);border-radius:10px;padding:4px 11px;cursor:pointer;font:inherit;font-size:13px}
+.warnbox{background:var(--dnbg);border-color:transparent;font-size:14px;margin-bottom:12px}
+.rgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:10px}
+.rcard{padding:14px}
+.rtop{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}
+.rtrend{font-weight:650;font-size:14px;margin-bottom:4px}
+.rbar{height:6px;border-radius:3px;background:var(--chip);margin:8px 0}
+.rbar i{display:block;height:100%;border-radius:3px;background:var(--accent)}
+.rchip{display:inline-block;padding:2px 10px;border-radius:999px;background:var(--chip);font-size:13px;font-weight:650}
+.rchip.warm{background:var(--dnbg);color:var(--warn)}.rchip.hot{background:var(--upbg);color:var(--up)}
+.rprev{margin-top:8px;padding:8px 10px;border-radius:10px;background:var(--chip);font-size:13px;line-height:1.6}
+.rnow{margin-top:8px;font-size:13px;color:var(--mute)}
 .note{margin-top:28px;padding:12px 14px;border-radius:12px;border:1px solid var(--line);color:var(--mute);font-size:13px}
 </style>
 </head>
@@ -66,8 +77,9 @@ button.theme{background:var(--card);border:1px solid var(--line);color:var(--mut
 <div id="open"></div>
 
 <h2>📡 Radar - kaun si coin signal ke kitni qareeb hai</h2>
-<div class="tablewrap" id="radar"></div>
-<div class="sub" style="margin-top:6px">Price live Binance se aati hai (page khula ho to har 15 second). Signal tab aata hai jab 4h candle neeche likhe level ke bahar <b>band</b> ho.</div>
+<div class="card warnbox"><b>⚠️ Ye trade nahi hai.</b> Radar sirf dikhata hai ke market ka mizaj kya hai aur signal kab ban sakta hai. <b>Trade tab lo jab upar "signal active hai" ka card aaye ya Telegram par NAYA SIGNAL ka message aaye.</b> Us card mein entry, stop-loss aur target sab likha hota hai.</div>
+<div class="rgrid" id="radar"></div>
+<div class="sub" style="margin-top:8px">Price live Binance se (page khula ho to har 15 second). "Andaza" wale numbers sirf aise hain ke agar abhi signal bana to stop/target lagbhag kahan hote; asli numbers signal ke waqt candle band hone par pakke hote hain.</div>
 
 <details class="card">
   <summary>Ye kaise kaam karta hai? (30 second)</summary>
@@ -154,13 +166,26 @@ function renderRadar() {
     const px = live[coin] ?? r.price, up = r.trend === 'up';
     const trig = up ? r.long_trigger : r.short_trigger;
     const dist = Math.abs(trig / px - 1) * 100, crossed = up ? px > trig : px < trig;
-    return {coin, px, up, trig, dist, crossed};
+    return {coin, px, up, trig, dist, crossed, atr: r.atr};
   }).sort((a, b) => a.dist - b.dist);
-  if (!rows.length) { $('radar').innerHTML = '<div class="empty">Radar ka data abhi nahi.</div>'; return; }
-  $('radar').innerHTML = '<table><thead><tr><th>Coin</th><th>Price</th><th>Bara trend</th><th>Signal ka level</th><th>Kitna door</th></tr></thead><tbody>' + rows.map(r => {
-    const tag = r.crossed ? '<span class="up"><b>level paar! candle band hone ka intezar</b></span>' : r.dist < 1 ? `<span class="warn"><b>${r.dist.toFixed(2)}% - bohat qareeb 🔥</b></span>` : `${r.dist.toFixed(1)}%`;
-    return `<tr><td><b>${esc(r.coin)}</b></td><td>${fmt(r.px)}</td><td><span class="badge ${r.up?'long':'short'}">${r.up?'UPAR (sirf long)':'NEECHE (sirf short)'}</span></td><td>${r.up?'upar ':'neeche '}${fmt(r.trig)}</td><td>${tag}</td></tr>`;
-  }).join('') + '</tbody></table>';
+  if (!rows.length) { $('radar').innerHTML = '<div class="empty card">Radar ka data abhi nahi.</div>'; return; }
+  const st = (S.config || {}).strategy || {sl_atr: 2, tp_r: 4};
+  $('radar').innerHTML = rows.map(r => {
+    const near = Math.max(0, Math.min(100, 100 - r.dist * 20));            // 0% far .. 100% at the level
+    const chip = r.crossed ? '<span class="rchip hot">level paar - candle band hone ka intezar</span>'
+      : r.dist < 1 ? `<span class="rchip warm">🔥 ${r.dist.toFixed(2)}% door - qareeb</span>` : `<span class="rchip">⏳ ${r.dist.toFixed(1)}% door</span>`;
+    let preview = '';
+    if (r.atr) {
+      const d = st.sl_atr * r.atr, side = r.up ? 1 : -1, stop = r.trig - side * d, tp = r.trig + side * d * st.tp_r;
+      preview = `<div class="rprev"><b>Andaza (agar abhi signal bana):</b> ${r.up ? 'BUY' : 'SELL'} ≈ ${fmt(r.trig)}<br>
+        Stop-loss ≈ <span class="dn">${fmt(stop)}</span> (${r.up ? '-' : '+'}${(d / r.trig * 100).toFixed(1)}%) · Target ≈ <span class="up">${fmt(tp)}</span> (${r.up ? '+' : '-'}${(d * st.tp_r / r.trig * 100).toFixed(1)}%)</div>`;
+    }
+    return `<div class="card rcard"><div class="rtop"><span class="coin" style="font-size:18px">${esc(r.coin)}</span><span><b>${fmt(r.px)}</b></span></div>
+      <div class="rtrend ${r.up ? 'up' : 'dn'}">${r.up ? '📈 Market tezi mein → sirf BUY (long) signal aa sakta hai' : '📉 Market mandi mein → sirf SELL (short) signal aa sakta hai'}</div>
+      <div class="sub">Signal tab bane ga jab 4h candle <b>${fmt(r.trig)}</b> ke ${r.up ? 'upar' : 'neeche'} <b>band</b> ho.</div>
+      <div class="rbar"><i style="width:${near}%"></i></div>${chip}${preview}
+      <div class="rnow">Abhi: <b>koi trade nahi</b> - wait karo</div></div>`;
+  }).join('');
 }
 
 function nextCheck() { // 4h candle closes at 00,04,...UTC; bot runs ~6 min later
