@@ -1,0 +1,48 @@
+# ---- Crypto signal bot settings. Edit `enabled` to switch coins / groups on or off. ----
+timeframe: 4h
+
+# How signals are generated (change this line to switch):
+#   close = wait for the 4h candle to CLOSE beyond the channel   (best edge in backtest, ~5 signals/week)
+#   early = alert within ~15 min of price crossing the channel   (earlier, ~30% weaker edge, more false alarms)
+#   both  = close signals + early alerts
+# "early"/"both" also need the 15-minute workflow (.github/workflows/early.yml) enabled.
+signal_mode: close
+
+strategy:            # 4h Donchian breakout + EMA200 trend filter (best walk-forward result)
+  n: 40
+  adx_min: 0
+  sl_atr: 2          # stop distance = 2 x ATR
+  tp_r: 4            # target = 4 x stop distance
+  max_hold_days: 3   # close the idea after 3 days if neither stop nor target was hit
+  allow_short: true  # futures: both directions
+
+risk:
+  per_trade_pct: 0.5   # % of account risked per signal
+  max_open_risk_pct: 2 # no new signal if total open risk would exceed this
+  max_leverage: 3
+
+costs:               # used when scoring signals (futures taker fee + slippage, per side)
+  fee: 0.0005
+  slippage: 0.0003
+
+groups:
+  majors:
+    enabled: true
+    risk_multiplier: 1.0
+    coins: [BTC, ETH, SOL, XRP, ADA, DOGE]
+  weaker_majors:     # tested but weaker in walk-forward -> off by default
+    enabled: false
+    risk_multiplier: 1.0
+    coins: [BNB, LINK]
+  midcaps:           # edge NOT proven in tests -> off by default
+    enabled: false
+    risk_multiplier: 0.5
+    coins: [AVAX, DOT, NEAR, ETC]
+  meme:              # untested, high slippage / manipulation risk -> off by default
+    enabled: false
+    risk_multiplier: 0.5
+    coins: [SHIB, PEPE, WIF, BONK, FLOKI]
+
+backtest_reference:  # what the backtest expected, shown on the dashboard to compare with live results
+  expectancy_R: 0.10
+  profit_factor: 1.2

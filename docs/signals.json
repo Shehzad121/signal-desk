@@ -1,0 +1,128 @@
+{
+ "signals": [],
+ "updated": "2026-10-24T13:01:42.708641+00:00",
+ "last_run": {
+  "time": "2026-10-24T13:01:42.708641+00:00",
+  "coins_checked": [
+   "BTC",
+   "ETH",
+   "SOL",
+   "XRP",
+   "ADA",
+   "DOGE"
+  ],
+  "errors": [],
+  "new": [],
+  "closed": [],
+  "notes": [],
+  "exchange": "binance"
+ },
+ "stats": {
+  "closed": 0,
+  "open": 0
+ },
+ "radar": {
+  "BTC": {
+   "price": 80599.41,
+   "ema200": 82035.36962184345,
+   "trend": "down",
+   "long_trigger": 84898.0,
+   "short_trigger": 80451.18
+  },
+  "ETH": {
+   "price": 2365.74,
+   "ema200": 2496.1200916820035,
+   "trend": "down",
+   "long_trigger": 2526.62,
+   "short_trigger": 2329.0
+  },
+  "SOL": {
+   "price": 101.52,
+   "ema200": 108.15220120237568,
+   "trend": "down",
+   "long_trigger": 109.2,
+   "short_trigger": 100.43
+  },
+  "XRP": {
+   "price": 1.2817,
+   "ema200": 1.375928686747227,
+   "trend": "down",
+   "long_trigger": 1.3992,
+   "short_trigger": 1.2562
+  },
+  "ADA": {
+   "price": 0.2085,
+   "ema200": 0.23013501065943937,
+   "trend": "down",
+   "long_trigger": 0.2305,
+   "short_trigger": 0.2063
+  },
+  "DOGE": {
+   "price": 0.0776,
+   "ema200": 0.08492821252966117,
+   "trend": "down",
+   "long_trigger": 0.0838,
+   "short_trigger": 0.07607
+  }
+ },
+ "welcomed": false,
+ "config": {
+  "timeframe": "4h",
+  "strategy": {
+   "n": 40,
+   "adx_min": 0,
+   "sl_atr": 2,
+   "tp_r": 4,
+   "max_hold_days": 3,
+   "allow_short": true
+  },
+  "risk": {
+   "per_trade_pct": 0.5,
+   "max_open_risk_pct": 2,
+   "max_leverage": 3
+  },
+  "groups": {
+   "majors": {
+    "enabled": true,
+    "coins": [
+     "BTC",
+     "ETH",
+     "SOL",
+     "XRP",
+     "ADA",
+     "DOGE"
+    ]
+   },
+   "weaker_majors": {
+    "enabled": false,
+    "coins": [
+     "BNB",
+     "LINK"
+    ]
+   },
+   "midcaps": {
+    "enabled": false,
+    "coins": [
+     "AVAX",
+     "DOT",
+     "NEAR",
+     "ETC"
+    ]
+   },
+   "meme": {
+    "enabled": false,
+    "coins": [
+     "SHIB",
+     "PEPE",
+     "WIF",
+     "BONK",
+     "FLOKI"
+    ]
+   }
+  },
+  "backtest_reference": {
+   "expectancy_R": 0.1,
+   "profit_factor": 1.2
+  }
+ }
+}

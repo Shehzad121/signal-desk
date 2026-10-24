@@ -1,0 +1,332 @@
+"""Live signal bot. Run it right after each 4h candle closes (GitHub Actions does this, see .github/workflows).
+
+    python bot.py                 # live: fetch candles, update open signals, send new ones to Telegram
+    python bot.py --dry-run       # same, but nothing is sent to Telegram
+    python bot.py --offline --asof 2025-03-01T00:00:00Z --state tmp.json   # replay on cached data
+
+It NEVER trades. It only posts signals (entry / stop / target) and tracks how they would have ended,
+using exactly the same rules as the backtest (stop checked first, gap fills, fees + slippage).
+Telegram: set env TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID (never commit them).
+"""
+import argparse
+import html
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import requests
+import yaml
+
+import data_loader
+from strategies import atr, donchian, ema
+
+ROOT = Path(__file__).parent
+TF_MIN = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}
+
+
+# ----------------------------------------------------------------------------- config / data
+def load_config():
+    return yaml.safe_load((ROOT / "config.yaml").read_text(encoding="utf-8"))
+
+
+def enabled_coins(cfg):
+    out = []
+    for gname, g in cfg["groups"].items():
+        if g.get("enabled"):
+            out += [(c, gname, float(g.get("risk_multiplier", 1.0))) for c in g["coins"]]
+    return out
+
+
+_OFFLINE = {}
+
+
+def get_candles(coin, cfg, asof, offline, tf=None):
+    sym, tf = f"{coin}/USDT", tf or cfg["timeframe"]
+    if offline:
+        if (coin, tf) not in _OFFLINE:
+            _OFFLINE[(coin, tf)] = data_loader.load(sym, tf, refresh=False)
+        df, ex = _OFFLINE[(coin, tf)], "cache"
+    else:
+        df, ex = data_loader.fetch_recent(sym, tf, 700 if tf != "15m" else 400)
+    if asof is not None:
+        df = df[df.index + pd.Timedelta(minutes=TF_MIN[tf]) <= asof]
+        df = df.iloc[-800:]
+    return df, ex
+
+
+# ----------------------------------------------------------------------------- trade tracking
+def evaluate(sig, df, cfg):
+    """Replay a signal over the candles after it. Same rules as engine.simulate. Returns updates dict."""
+    side, stop, tp = sig["side"], sig["stop"], sig["tp"]
+    entry, dist = sig["entry_eff"], sig["dist"]
+    fee, slip = cfg["costs"]["fee"], cfg["costs"]["slippage"]
+    max_bars = int(cfg["strategy"]["max_hold_days"] * 1440 / TF_MIN[sig.get("tf", cfg["timeframe"])])
+    after = df[df.index > pd.Timestamp(sig["signal_candle"])]
+    exit_px = reason = exit_ts = None
+    k = 0
+    for k, (ts, r) in enumerate(after.iloc[:max_bars].iterrows(), start=1):
+        o, h, l, c = r["open"], r["high"], r["low"], r["close"]
+        if side == 1:
+            if o <= stop or l <= stop:
+                exit_px, reason = min(o, stop) * (1 - slip), "stop"
+            elif h >= tp:
+                exit_px, reason = (max(o, tp) if k > 1 else tp), "target"
+        else:
+            if o >= stop or h >= stop:
+                exit_px, reason = max(o, stop) * (1 + slip), "stop"
+            elif l <= tp:
+                exit_px, reason = (min(o, tp) if k > 1 else tp), "target"
+        if exit_px is None and k == max_bars:
+            exit_px, reason = c * (1 - slip * side), "time"
+        if exit_px is not None:
+            exit_ts = ts
+            break
+    upd = {"bars_held": k}
+    if exit_px is None:
+        upd["last_price"] = float(after["close"].iloc[-1]) if len(after) else sig["entry"]
+        return upd
+    gross = side * (exit_px - entry) / dist
+    upd.update(status="closed", exit_price=float(exit_px), exit_reason=reason, exit_time=exit_ts.isoformat(),
+               R=round(float(gross - fee * (entry + exit_px) / dist), 3))
+    return upd
+
+
+def _build(coin, group, mult, side, close, a, cand, tf, mode, cfg, open_risk):
+    st, rk = cfg["strategy"], cfg["risk"]
+    entry_eff = close * (1 + cfg["costs"]["slippage"] * side)
+    dist = st["sl_atr"] * a
+    eff = min(rk["per_trade_pct"] / 100 * mult, rk["max_leverage"] * dist / entry_eff)
+    if open_risk + eff * 100 > rk["max_open_risk_pct"] + 1e-9:
+        return None, f"{coin} {'LONG' if side == 1 else 'SHORT'} skipped (open-risk cap {rk['max_open_risk_pct']}%)"
+    end = cand + pd.Timedelta(minutes=TF_MIN[tf])
+    return dict(
+        id=f"{coin}-{cand:%Y%m%d%H%M}-{tf}", symbol=f"{coin}/USDT", coin=coin, group=group, tf=tf, mode=mode,
+        side=side, status="open", signal_candle=cand.isoformat(), signal_time=end.isoformat(),
+        entry=close, entry_eff=entry_eff, stop=entry_eff - side * dist, tp=entry_eff + side * dist * st["tp_r"],
+        dist=dist, risk_pct=round(eff * 100, 3), size_pct=round(eff / (dist / entry_eff) * 100, 1),
+        tp_r=st["tp_r"], bars_held=0, last_price=close,
+        deadline=(end + pd.Timedelta(days=st["max_hold_days"])).isoformat(),
+    ), None
+
+
+def new_signal(coin, group, mult, df, cfg, open_risk):
+    """Mode 'close': breakout confirmed by the CLOSE of a 4h candle."""
+    st = cfg["strategy"]
+    long_s, short_s = donchian(df, n=st["n"], adx_min=st.get("adx_min", 0))
+    if long_s[-1]:
+        side = 1
+    elif short_s[-1] and st.get("allow_short", True):
+        side = -1
+    else:
+        return None, None
+    return _build(coin, group, mult, side, float(df["close"].iloc[-1]), float(atr(df).iloc[-1]),
+                  df.index[-1], cfg["timeframe"], "close", cfg, open_risk)
+
+
+def early_signal(coin, group, mult, df4, df15, cfg, open_risk):
+    """Mode 'early': alert as soon as a 15m candle closes beyond the 4h channel (channel/EMA200/ATR come from
+    the last CLOSED 4h candles). Same stop/target rules, but more false breakouts than waiting for the 4h close."""
+    st, n = cfg["strategy"], cfg["strategy"]["n"]
+    if len(df15) < 3:
+        return None, None
+
+    def levels(ts):
+        prior = df4[df4.index < ts.floor("4h")]
+        if len(prior) < 250:
+            return None
+        return (float(prior["high"].iloc[-n:].max()), float(prior["low"].iloc[-n:].min()),
+                float(ema(prior["close"], 200).iloc[-1]), float(atr(prior).iloc[-1]))
+
+    c, pc = float(df15["close"].iloc[-1]), float(df15["close"].iloc[-2])
+    lv, plv = levels(df15.index[-1]), levels(df15.index[-2])
+    if not lv or not plv:
+        return None, None
+    hi, lo, base, a = lv
+    if c > hi and pc <= plv[0] and c > base:
+        side = 1
+    elif c < lo and pc >= plv[1] and c < base and st.get("allow_short", True):
+        side = -1
+    else:
+        return None, None
+    return _build(coin, group, mult, side, c, a, df15.index[-1], "15m", "early", cfg, open_risk)
+
+
+# ----------------------------------------------------------------------------- stats
+def compute_stats(signals):
+    closed = [s for s in signals if s["status"] == "closed"]
+    R = np.array([s["R"] for s in closed], float)
+    rk = np.array([s["risk_pct"] / 100 for s in closed], float)
+    if not len(R):
+        return dict(closed=0, open=sum(s["status"] == "open" for s in signals))
+    eq = np.cumprod(1 + R * rk)
+    peak = np.maximum.accumulate(eq)
+    wins, losses = R[R > 0], R[R <= 0]
+    return dict(
+        closed=len(R), open=sum(s["status"] == "open" for s in signals), win_rate=round(float((R > 0).mean()), 3),
+        expectancy_R=round(float(R.mean()), 3), total_R=round(float(R.sum()), 2),
+        profit_factor=round(float(wins.sum() / -losses.sum()), 2) if losses.sum() < 0 else None,
+        equity_return_pct=round(float((eq[-1] - 1) * 100), 2), max_drawdown_pct=round(float(((eq - peak) / peak).min() * 100), 2),
+    )
+
+
+# ----------------------------------------------------------------------------- telegram
+def fmt(p):
+    return f"{p:,.2f}" if p >= 100 else f"{p:,.4f}" if p >= 1 else f"{p:.6g}"
+
+
+def send(text, dry):
+    token, chat = os.environ.get("TELEGRAM_BOT_TOKEN"), os.environ.get("TELEGRAM_CHAT_ID")
+    print("\n--- telegram ---\n" + html.unescape(text.replace("<b>", "").replace("</b>", "").replace("<code>", "").replace("</code>", "")))
+    if dry or not token or not chat:
+        if not dry:
+            print("(TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set -> not sent)")
+        return
+    try:
+        r = requests.post(f"https://api.telegram.org/bot{token}/sendMessage",
+                          json={"chat_id": chat, "text": text, "parse_mode": "HTML", "disable_web_page_preview": True}, timeout=20)
+        if not r.ok:
+            print("telegram error:", r.status_code, r.text[:200])
+    except requests.RequestException as e:
+        print("telegram error:", e)
+
+
+def msg_new(s, cfg):
+    long_ = s["side"] == 1
+    d, icon = ("LONG (BUY)", "🟢") if long_ else ("SHORT (SELL)", "🔴")
+    sp, tp_ = abs(s["stop"] / s["entry"] - 1) * 100, abs(s["tp"] / s["entry"] - 1) * 100
+    dl = pd.Timestamp(s["deadline"]).strftime("%d %b %H:%M UTC")
+    return (f"{icon} <b>NAYA SIGNAL: {d} {html.escape(s['symbol'])}</b>\n\n"
+            f"1️⃣ <b>Entry:</b> abhi market price par {'buy' if long_ else 'sell/short'} karo (≈ <code>{fmt(s['entry'])}</code>)\n"
+            f"2️⃣ <b>Stop-loss</b> foran lagao: <code>{fmt(s['stop'])}</code> (-{sp:.1f}%)\n"
+            f"3️⃣ <b>Take-profit</b> lagao: <code>{fmt(s['tp'])}</code> (+{tp_:.1f}%)\n"
+            f"4️⃣ <b>Deadline:</b> {dl} tak stop ya target na lage to position khud band kar do\n\n"
+            f"💰 Risk: account ka {s['risk_pct']}% → position ≈ {s['size_pct']}% of account ({s['size_pct'] / 100:.2f}x)\n"
+            f"Stop-loss ya target lagte hi position khud band ho jati hai. Bot khud trade nahi karta."
+            + ("\n\n⚡ <b>JALDI ALERT:</b> 4h candle abhi band nahi hui, isliye false signal ka chance thora zyada hai "
+               "(backtest mein is ka edge ~30% kam tha)." if s.get("mode") == "early" else ""))
+
+
+def msg_closed(s):
+    icon = {"target": "✅", "stop": "❌", "time": "⏱"}[s["exit_reason"]]
+    d = "LONG" if s["side"] == 1 else "SHORT"
+    why = {"target": "Target lag gaya (profit)", "stop": "Stop-loss lag gaya (nuksan)",
+           "time": "Deadline poori - agar position khuli hai to ab band kar do"}[s["exit_reason"]]
+    return (f"{icon} <b>{d} {html.escape(s['symbol'])} band</b>\n{why}\n"
+            f"Exit ≈ <code>{fmt(s['exit_price'])}</code> · natija <b>{s['R']:+.2f}R</b> "
+            f"(1R = jitna risk liya tha)")
+
+
+def msg_summary(state):
+    st = state["stats"]
+    openers = [s for s in state["signals"] if s["status"] == "open"]
+    lines = ["📊 <b>Daily summary</b>", f"Open signals: {len(openers)}"]
+    lines += [f"• {'LONG' if s['side'] == 1 else 'SHORT'} {s['symbol']} entry {fmt(s['entry'])}" for s in openers]
+    if st.get("closed"):
+        lines.append(f"Closed: {st['closed']} · win {st['win_rate']:.0%} · expectancy {st['expectancy_R']:+.2f}R · "
+                     f"total {st['total_R']:+.1f}R · maxDD {st['max_drawdown_pct']}%")
+    else:
+        lines.append("No closed signals yet (forward test just started).")
+    return "\n".join(lines)
+
+
+# ----------------------------------------------------------------------------- main
+def main():
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")  # emoji in messages on Windows consoles
+    except (AttributeError, OSError):
+        pass
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--dry-run", action="store_true", help="do not send to Telegram")
+    ap.add_argument("--offline", action="store_true", help="use cached CSV candles (testing)")
+    ap.add_argument("--asof", help="pretend the time is this UTC timestamp (testing)")
+    ap.add_argument("--state", default=str(ROOT / "docs" / "signals.json"))
+    ap.add_argument("--no-summary", action="store_true")
+    ap.add_argument("--run-type", choices=["close", "early"], default="close",
+                    help="close = runs right after a 4h candle closes; early = runs every ~15 min (only needed for signal_mode early/both)")
+    args = ap.parse_args()
+
+    cfg = load_config()
+    now = pd.Timestamp(args.asof, tz="UTC") if args.asof else pd.Timestamp.now(tz="UTC")
+    asof = pd.Timestamp(args.asof, tz="UTC") if args.asof else None
+    path = Path(args.state)
+    state = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"signals": []}
+    first_run = not state.get("welcomed", False)   # Telegram "bot started" message goes out once
+    signals = state["signals"]
+    radar = {}
+    coins = enabled_coins(cfg)
+    run = dict(time=now.isoformat(), coins_checked=[], errors=[], new=[], closed=[], notes=[], exchange=None)
+    msgs = []
+
+    if first_run:
+        msgs.append("🤖 <b>Signal bot started</b>\nWatching: " + ", ".join(c for c, _, _ in coins) +
+                    f"\nTimeframe {cfg['timeframe']} · Donchian({cfg['strategy']['n']}) breakout · signals only, no auto-trading.")
+
+    mode = cfg.get("signal_mode", "close")
+    if mode not in ("close", "early", "both"):
+        raise SystemExit(f"config.yaml: signal_mode must be close, early or both (got {mode!r})")
+    if args.run_type == "early" and mode == "close":
+        print("signal_mode is 'close' - the 15-minute run has nothing to do.")
+        return
+    check_close = args.run_type == "close" and mode in ("close", "both")
+    check_early = mode in ("early", "both")
+
+    for coin, group, mult in coins:
+        try:
+            df, ex = get_candles(coin, cfg, asof, args.offline)
+            run["exchange"] = ex
+            if len(df) < 300:
+                raise RuntimeError("not enough candles")
+            run["coins_checked"].append(coin)
+            has15 = any(x["status"] == "open" and x["coin"] == coin and x.get("tf") == "15m" for x in signals)
+            df15 = get_candles(coin, cfg, asof, args.offline, "15m")[0] if (check_early or has15) else None
+            n = cfg["strategy"]["n"]               # "radar": how far is each coin from triggering a signal?
+            ema200 = float(df["close"].ewm(span=200, adjust=False).mean().iloc[-1])
+            radar[coin] = dict(price=float(df["close"].iloc[-1]), ema200=ema200, trend="up" if df["close"].iloc[-1] > ema200 else "down",
+                               long_trigger=float(df["high"].iloc[-n:].max()), short_trigger=float(df["low"].iloc[-n:].min()))
+            for s_ in signals:                     # 1) update open signals of this coin
+                if s_["status"] == "open" and s_["coin"] == coin:
+                    s_.update(evaluate(s_, df15 if s_.get("tf") == "15m" else df, cfg))
+                    if s_["status"] == "closed":
+                        run["closed"].append(s_["id"])
+                        msgs.append(msg_closed(s_))
+            if any(x["status"] == "open" and x["coin"] == coin for x in signals):
+                continue
+            open_risk = sum(x["risk_pct"] for x in signals if x["status"] == "open")
+            sig, note = (new_signal(coin, group, mult, df, cfg, open_risk) if check_close else (None, None))   # 2) new signal?
+            if sig is None and note is None and check_early:
+                sig, note = early_signal(coin, group, mult, df, df15, cfg, open_risk)
+            if note:
+                run["notes"].append(note)
+            if sig and not any(x["id"] == sig["id"] for x in signals):
+                signals.append(sig)
+                run["new"].append(sig["id"])
+                msgs.append(msg_new(sig, cfg))
+        except Exception as e:
+            run["errors"].append(f"{coin}: {e}")
+
+    state.update(
+        updated=now.isoformat(), last_run=run, signals=signals, stats=compute_stats(signals), radar=radar,
+        stats_by_mode={m: compute_stats([x for x in signals if x.get('mode', 'close') == m]) for m in ('close', 'early')},
+        welcomed=state.get("welcomed", False) or (first_run and not args.dry_run),
+        config=dict(timeframe=cfg["timeframe"], signal_mode=mode, strategy=cfg["strategy"], risk=cfg["risk"],
+                    groups={g: dict(enabled=v["enabled"], coins=v["coins"]) for g, v in cfg["groups"].items()},
+                    backtest_reference=cfg["backtest_reference"]),
+    )
+    if now.hour == 0 and args.run_type == "close" and not args.no_summary and not first_run:
+        msgs.append(msg_summary(state))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=1), encoding="utf-8")
+    for m in msgs:
+        send(m, args.dry_run)
+    print(f"\n[{now:%Y-%m-%d %H:%M}] checked={len(run['coins_checked'])} new={len(run['new'])} "
+          f"closed={len(run['closed'])} errors={run['errors']} notes={run['notes']}")
+    if run["errors"] and not run["coins_checked"]:
+        raise SystemExit(1)  # make the GitHub Action fail visibly if nothing worked
+
+
+if __name__ == "__main__":
+    main()
