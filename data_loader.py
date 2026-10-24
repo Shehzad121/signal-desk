@@ -6,7 +6,7 @@ import ccxt
 import pandas as pd
 
 DATA_DIR = Path(__file__).parent / "data"
-EXCHANGES = ["binance", "bybit", "okx"]  # fallback order (some are geo-blocked)
+EXCHANGES = ["binance", "bybit", "okx", "kucoin", "gate", "bitget", "kraken"]  # fallback order (several are geo-blocked from the US, where GitHub runs)
 TF_MS = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000}
 
 
@@ -75,16 +75,23 @@ def load(symbol: str, tf: str, since: str = "2019-01-01", refresh: bool = True) 
 
 
 def fetch_recent(symbol: str, tf: str, limit: int = 700):
-    """Latest closed candles straight from an exchange (used by the live bot). Returns (df, exchange_name)."""
+    """Latest `limit` closed candles straight from an exchange (used by the live bot). Returns (df, exchange_name).
+    Paginates forward from (now - limit candles) because some exchanges (OKX) cap one request at ~300 candles."""
     last_err = None
+    step = TF_MS[tf]
+    since_ms = int(time.time() * 1000) - (limit + 5) * step
     for name in EXCHANGES:
         try:
             ex = getattr(ccxt, name)({"enableRateLimit": True})
-            rows = ex.fetch_ohlcv(symbol, tf, limit=limit)
+            rows = _download(ex, symbol, tf, since_ms)
             df = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
             df.index = pd.to_datetime(df.pop("ts"), unit="ms", utc=True)
+            df = df[~df.index.duplicated(keep="last")].sort_index()
             now = pd.Timestamp.now(tz="UTC")
-            return df[df.index + pd.Timedelta(milliseconds=TF_MS[tf]) <= now], name
+            df = df[df.index + pd.Timedelta(milliseconds=step) <= now]
+            if len(df) < min(limit, 400) * 0.9:
+                raise RuntimeError(f"{name} returned only {len(df)} candles")
+            return df, name
         except Exception as e:
-            last_err = e
+            last_err = f"{name}: {e}"
     raise RuntimeError(f"all exchanges failed for {symbol}: {last_err}")
