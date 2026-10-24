@@ -1,8 +1,8 @@
 {
  "signals": [],
- "updated": "2026-10-24T13:01:42.708641+00:00",
+ "updated": "2026-10-24T13:48:33.005402+00:00",
  "last_run": {
-  "time": "2026-10-24T13:01:42.708641+00:00",
+  "time": "2026-10-24T13:48:33.005402+00:00",
   "coins_checked": [
    "BTC",
    "ETH",
@@ -15,7 +15,7 @@
   "new": [],
   "closed": [],
   "notes": [],
-  "exchange": "binance"
+  "exchange": "okx"
  },
  "stats": {
   "closed": 0,
@@ -23,51 +23,52 @@
  },
  "radar": {
   "BTC": {
-   "price": 80599.41,
-   "ema200": 82035.36962184345,
+   "price": 80600.2,
+   "ema200": 82035.7258458944,
    "trend": "down",
-   "long_trigger": 84898.0,
-   "short_trigger": 80451.18
+   "long_trigger": 84899.6,
+   "short_trigger": 80458.5
   },
   "ETH": {
-   "price": 2365.74,
-   "ema200": 2496.1200916820035,
+   "price": 2365.67,
+   "ema200": 2496.141603575912,
    "trend": "down",
-   "long_trigger": 2526.62,
-   "short_trigger": 2329.0
+   "long_trigger": 2526.4,
+   "short_trigger": 2329.04
   },
   "SOL": {
-   "price": 101.52,
-   "ema200": 108.15220120237568,
+   "price": 101.51,
+   "ema200": 108.15220954354632,
    "trend": "down",
-   "long_trigger": 109.2,
-   "short_trigger": 100.43
+   "long_trigger": 109.22,
+   "short_trigger": 100.42
   },
   "XRP": {
    "price": 1.2817,
-   "ema200": 1.375928686747227,
+   "ema200": 1.3759491634876175,
    "trend": "down",
-   "long_trigger": 1.3992,
-   "short_trigger": 1.2562
+   "long_trigger": 1.3991,
+   "short_trigger": 1.2561
   },
   "ADA": {
-   "price": 0.2085,
-   "ema200": 0.23013501065943937,
+   "price": 0.2084,
+   "ema200": 0.23013633136465253,
    "trend": "down",
-   "long_trigger": 0.2305,
-   "short_trigger": 0.2063
+   "long_trigger": 0.2306,
+   "short_trigger": 0.2062
   },
   "DOGE": {
-   "price": 0.0776,
-   "ema200": 0.08492821252966117,
+   "price": 0.07761,
+   "ema200": 0.08492994372485113,
    "trend": "down",
    "long_trigger": 0.0838,
-   "short_trigger": 0.07607
+   "short_trigger": 0.07609
   }
  },
  "welcomed": false,
  "config": {
   "timeframe": "4h",
+  "signal_mode": "close",
   "strategy": {
    "n": 40,
    "adx_min": 0,
@@ -123,6 +124,16 @@
   "backtest_reference": {
    "expectancy_R": 0.1,
    "profit_factor": 1.2
+  }
+ },
+ "stats_by_mode": {
+  "close": {
+   "closed": 0,
+   "open": 0
+  },
+  "early": {
+   "closed": 0,
+   "open": 0
   }
  }
 }
