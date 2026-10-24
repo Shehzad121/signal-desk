@@ -1,8 +1,101 @@
 {
- "signals": [],
- "updated": "2026-10-24T13:48:33.005402+00:00",
+ "signals": [
+  {
+   "id": "BTC-202610241200-4h",
+   "symbol": "BTC/USDT",
+   "coin": "BTC",
+   "group": "majors",
+   "tf": "4h",
+   "mode": "close",
+   "side": -1,
+   "status": "open",
+   "signal_candle": "2026-10-24T12:00:00+00:00",
+   "signal_time": "2026-10-24T16:00:00+00:00",
+   "entry": 79803.6,
+   "entry_eff": 79779.65892,
+   "stop": 81346.71370454648,
+   "tp": 73511.4397818141,
+   "dist": 1567.0547845464755,
+   "risk_pct": 0.5,
+   "size_pct": 25.5,
+   "tp_r": 4,
+   "bars_held": 0,
+   "last_price": 79803.6,
+   "deadline": "2026-10-27T16:00:00+00:00"
+  },
+  {
+   "id": "ETH-202610241200-4h",
+   "symbol": "ETH/USDT",
+   "coin": "ETH",
+   "group": "majors",
+   "tf": "4h",
+   "mode": "close",
+   "side": -1,
+   "status": "open",
+   "signal_candle": "2026-10-24T12:00:00+00:00",
+   "signal_time": "2026-10-24T16:00:00+00:00",
+   "entry": 2306.73,
+   "entry_eff": 2306.037981,
+   "stop": 2377.1263980501585,
+   "tp": 2021.6843127993657,
+   "dist": 71.08841705015857,
+   "risk_pct": 0.5,
+   "size_pct": 16.2,
+   "tp_r": 4,
+   "bars_held": 0,
+   "last_price": 2306.73,
+   "deadline": "2026-10-27T16:00:00+00:00"
+  },
+  {
+   "id": "SOL-202610241200-4h",
+   "symbol": "SOL/USDT",
+   "coin": "SOL",
+   "group": "majors",
+   "tf": "4h",
+   "mode": "close",
+   "side": -1,
+   "status": "open",
+   "signal_candle": "2026-10-24T12:00:00+00:00",
+   "signal_time": "2026-10-24T16:00:00+00:00",
+   "entry": 99.78,
+   "entry_eff": 99.750066,
+   "stop": 103.06786381281526,
+   "tp": 86.47887474873895,
+   "dist": 3.3177978128152628,
+   "risk_pct": 0.5,
+   "size_pct": 15.0,
+   "tp_r": 4,
+   "bars_held": 0,
+   "last_price": 99.78,
+   "deadline": "2026-10-27T16:00:00+00:00"
+  },
+  {
+   "id": "ADA-202610241200-4h",
+   "symbol": "ADA/USDT",
+   "coin": "ADA",
+   "group": "majors",
+   "tf": "4h",
+   "mode": "close",
+   "side": -1,
+   "status": "open",
+   "signal_candle": "2026-10-24T12:00:00+00:00",
+   "signal_time": "2026-10-24T16:00:00+00:00",
+   "entry": 0.2037,
+   "entry_eff": 0.20363889,
+   "stop": 0.21297424024279213,
+   "tp": 0.16629748902883143,
+   "dist": 0.00933535024279214,
+   "risk_pct": 0.5,
+   "size_pct": 10.9,
+   "tp_r": 4,
+   "bars_held": 0,
+   "last_price": 0.2037,
+   "deadline": "2026-10-27T16:00:00+00:00"
+  }
+ ],
+ "updated": "2026-10-24T17:11:53.160130+00:00",
  "last_run": {
-  "time": "2026-10-24T13:48:33.005402+00:00",
+  "time": "2026-10-24T17:11:53.160130+00:00",
   "coins_checked": [
    "BTC",
    "ETH",
@@ -12,57 +105,70 @@
    "DOGE"
   ],
   "errors": [],
-  "new": [],
+  "new": [
+   "BTC-202610241200-4h",
+   "ETH-202610241200-4h",
+   "SOL-202610241200-4h",
+   "ADA-202610241200-4h"
+  ],
   "closed": [],
-  "notes": [],
+  "notes": [
+   "DOGE SHORT skipped (open-risk cap 2%)"
+  ],
   "exchange": "okx"
  },
  "stats": {
   "closed": 0,
-  "open": 0
+  "open": 4
  },
  "radar": {
   "BTC": {
-   "price": 80600.2,
-   "ema200": 82035.7258458944,
+   "price": 79803.6,
+   "ema200": 82013.46088377481,
    "trend": "down",
    "long_trigger": 84899.6,
-   "short_trigger": 80458.5
+   "short_trigger": 79220.1,
+   "atr": 783.5273922732378
   },
   "ETH": {
-   "price": 2365.67,
-   "ema200": 2496.141603575912,
+   "price": 2306.73,
+   "ema200": 2494.2521889578857,
    "trend": "down",
    "long_trigger": 2526.4,
-   "short_trigger": 2329.04
+   "short_trigger": 2282.85,
+   "atr": 35.544208525079284
   },
   "SOL": {
-   "price": 101.51,
-   "ema200": 108.15220954354632,
+   "price": 99.78,
+   "ema200": 108.06872876091613,
    "trend": "down",
    "long_trigger": 109.22,
-   "short_trigger": 100.42
+   "short_trigger": 98.62,
+   "atr": 1.6588989064076314
   },
   "XRP": {
-   "price": 1.2817,
-   "ema200": 1.3759491634876175,
+   "price": 1.2683,
+   "ema200": 1.374881969870754,
    "trend": "down",
    "long_trigger": 1.3991,
-   "short_trigger": 1.2561
+   "short_trigger": 1.2547,
+   "atr": 0.020038349785327616
   },
   "ADA": {
-   "price": 0.2084,
-   "ema200": 0.23013633136465253,
+   "price": 0.2037,
+   "ema200": 0.229873195683856,
    "trend": "down",
    "long_trigger": 0.2306,
-   "short_trigger": 0.2062
+   "short_trigger": 0.2005,
+   "atr": 0.00466767512139607
   },
   "DOGE": {
-   "price": 0.07761,
-   "ema200": 0.08492994372485113,
+   "price": 0.0757,
+   "ema200": 0.0848381560532928,
    "trend": "down",
    "long_trigger": 0.0838,
-   "short_trigger": 0.07609
+   "short_trigger": 0.0748,
+   "atr": 0.0014273461359261652
   }
  },
  "welcomed": false,
@@ -129,7 +235,7 @@
  "stats_by_mode": {
   "close": {
    "closed": 0,
-   "open": 0
+   "open": 4
   },
   "early": {
    "closed": 0,
