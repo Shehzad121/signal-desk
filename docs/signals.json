@@ -93,9 +93,9 @@
    "deadline": "2026-10-27T16:00:00+00:00"
   }
  ],
- "updated": "2026-10-24T20:39:08.065855+00:00",
+ "updated": "2026-10-24T23:05:50.727581+00:00",
  "last_run": {
-  "time": "2026-10-24T20:39:08.065855+00:00",
+  "time": "2026-10-24T23:05:50.727581+00:00",
   "coins_checked": [
    "BTC",
    "ETH",
@@ -107,7 +107,10 @@
   "errors": [],
   "new": [],
   "closed": [],
-  "notes": [],
+  "notes": [
+   "XRP: last 4h candle closed more than 2h ago - no new close-signal check",
+   "DOGE: last 4h candle closed more than 2h ago - no new close-signal check"
+  ],
   "exchange": "okx"
  },
  "stats": {
