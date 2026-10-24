@@ -234,7 +234,8 @@ function renderOpen() {
     const num = (n) => `<span class="val" data-copy="${raw(n)}" title="Copy">${fmt(n)}</span>`;
     return `<div class="card sig">
       <div class="sig-h ${long?'long':'short'}"><span class="coin">${esc(s.coin)}${s.mode==='early'?' <span class="badge" title="4h candle abhi band nahi hui - false signal ka chance zyada">⚡ JALDI</span>':''}</span><span class="side ${long?'up':'dn'}">${long?'LONG - BUY':'SHORT - SELL'}</span></div>
-      <div class="pnl ${v[2]}">${v[0]} · ${sgn(r.toFixed(2))}R<small>${v[1]}${live[s.coin]?'':' (price = aakhri candle close)'}</small></div>
+      <div class="pnl ${v[2]}">${v[0]} · ${sgn(r.toFixed(2))}R<small>${v[1]}</small>
+        <small>Abhi price: <b>${fmt(px)}</b> ${live[s.coin]?'<span class="up">(live, Binance USDT)</span>':'<span class="warn">(live nahi - bot ki aakhri candle ki price)</span>'} · Signal ki entry: <b>${fmt(s.entry)}</b> (${sgn(((px/s.entry-1)*100).toFixed(2))}%)</small></div>
       <ol class="steps">
         <li><div><b>Entry lo</b>Abhi market price par ${long?'buy':'sell (short)'} karo ${num(s.entry)}</div></li>
         <li><div><b>Stop-loss lagao (zaroori!)</b>Entry ke saath hi: ${num(s.stop)} <span class="sub">(${sgn(sp.toFixed(1))}% · yahan band = nuksan -1R)</span></div></li>
