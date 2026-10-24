@@ -311,7 +311,7 @@ def main():
     state.update(
         updated=now.isoformat(), last_run=run, signals=signals, stats=compute_stats(signals), radar=radar,
         stats_by_mode={m: compute_stats([x for x in signals if x.get('mode', 'close') == m]) for m in ('close', 'early')},
-        welcomed=state.get("welcomed", False) or (first_run and not args.dry_run),
+        welcomed=state.get("welcomed", False) or (first_run and not args.dry_run and bool(os.environ.get("TELEGRAM_BOT_TOKEN"))),
         config=dict(timeframe=cfg["timeframe"], signal_mode=mode, strategy=cfg["strategy"], risk=cfg["risk"],
                     groups={g: dict(enabled=v["enabled"], coins=v["coins"]) for g, v in cfg["groups"].items()},
                     backtest_reference=cfg["backtest_reference"]),
