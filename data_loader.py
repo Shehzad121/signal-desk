@@ -7,6 +7,7 @@ import pandas as pd
 
 DATA_DIR = Path(__file__).parent / "data"
 EXCHANGES = ["binance", "bybit", "okx", "kucoin", "gate", "bitget", "kraken"]  # fallback order (several are geo-blocked from the US, where GitHub runs)
+_PREFERRED = None  # exchange that worked last (so blocked ones are not retried for every coin)
 TF_MS = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000}
 
 
@@ -17,11 +18,11 @@ def _cache_path(symbol: str, tf: str) -> Path:
 def _download(ex, symbol: str, tf: str, since_ms: int) -> list:
     rows, step = [], TF_MS[tf]
     while True:
-        for attempt in range(5):
+        for attempt in range(3):
             try:
                 batch = ex.fetch_ohlcv(symbol, tf, since=since_ms, limit=1000)
                 break
-            except (ccxt.NetworkError, ccxt.RequestTimeout):
+            except (ccxt.RequestTimeout, ccxt.RateLimitExceeded, ccxt.DDoSProtection):  # transient -> retry
                 time.sleep(2 * (attempt + 1))
         else:
             raise RuntimeError(f"network failure fetching {symbol} {tf}")
@@ -77,10 +78,12 @@ def load(symbol: str, tf: str, since: str = "2019-01-01", refresh: bool = True) 
 def fetch_recent(symbol: str, tf: str, limit: int = 700):
     """Latest `limit` closed candles straight from an exchange (used by the live bot). Returns (df, exchange_name).
     Paginates forward from (now - limit candles) because some exchanges (OKX) cap one request at ~300 candles."""
+    global _PREFERRED
     last_err = None
     step = TF_MS[tf]
     since_ms = int(time.time() * 1000) - (limit + 5) * step
-    for name in EXCHANGES:
+    order = ([_PREFERRED] if _PREFERRED else []) + [n for n in EXCHANGES if n != _PREFERRED]
+    for name in order:
         try:
             ex = getattr(ccxt, name)({"enableRateLimit": True})
             rows = _download(ex, symbol, tf, since_ms)
@@ -91,7 +94,10 @@ def fetch_recent(symbol: str, tf: str, limit: int = 700):
             df = df[df.index + pd.Timedelta(milliseconds=step) <= now]
             if len(df) < min(limit, 400) * 0.9:
                 raise RuntimeError(f"{name} returned only {len(df)} candles")
+            _PREFERRED = name
             return df, name
         except Exception as e:
-            last_err = f"{name}: {e}"
+            last_err = f"{name}: {str(e)[:80]}"
+            if name == _PREFERRED:
+                _PREFERRED = None
     raise RuntimeError(f"all exchanges failed for {symbol}: {last_err}")
