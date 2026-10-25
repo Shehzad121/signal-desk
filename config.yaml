@@ -30,10 +30,14 @@ groups:
     enabled: true
     risk_multiplier: 1.0
     coins: [BTC, ETH, SOL, XRP, ADA, DOGE]
+  bnb:               # user's main trading coin. Backtest edge for BNB is weak (~+0.08R, negative since 2022) -> watch its record on the dashboard
+    enabled: true
+    risk_multiplier: 1.0
+    coins: [BNB]
   weaker_majors:     # tested but weaker in walk-forward -> off by default
     enabled: false
     risk_multiplier: 1.0
-    coins: [BNB, LINK]
+    coins: [LINK]
   midcaps:           # edge NOT proven in tests -> off by default
     enabled: false
     risk_multiplier: 0.5
