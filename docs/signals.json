@@ -19,8 +19,8 @@
    "risk_pct": 0.5,
    "size_pct": 25.5,
    "tp_r": 4,
-   "bars_held": 1,
-   "last_price": 80488.7,
+   "bars_held": 2,
+   "last_price": 80880.9,
    "deadline": "2026-10-27T16:00:00+00:00"
   },
   {
@@ -42,8 +42,8 @@
    "risk_pct": 0.5,
    "size_pct": 16.2,
    "tp_r": 4,
-   "bars_held": 1,
-   "last_price": 2339.57,
+   "bars_held": 2,
+   "last_price": 2358.61,
    "deadline": "2026-10-27T16:00:00+00:00"
   },
   {
@@ -65,8 +65,8 @@
    "risk_pct": 0.5,
    "size_pct": 15.0,
    "tp_r": 4,
-   "bars_held": 1,
-   "last_price": 101.16,
+   "bars_held": 2,
+   "last_price": 102.36,
    "deadline": "2026-10-27T16:00:00+00:00"
   },
   {
@@ -88,14 +88,14 @@
    "risk_pct": 0.5,
    "size_pct": 10.9,
    "tp_r": 4,
-   "bars_held": 1,
-   "last_price": 0.2064,
+   "bars_held": 2,
+   "last_price": 0.2082,
    "deadline": "2026-10-27T16:00:00+00:00"
   }
  ],
- "updated": "2026-10-24T23:05:50.727581+00:00",
+ "updated": "2026-10-25T01:05:07.839413+00:00",
  "last_run": {
-  "time": "2026-10-24T23:05:50.727581+00:00",
+  "time": "2026-10-25T01:05:07.839413+00:00",
   "coins_checked": [
    "BTC",
    "ETH",
@@ -107,10 +107,7 @@
   "errors": [],
   "new": [],
   "closed": [],
-  "notes": [
-   "XRP: last 4h candle closed more than 2h ago - no new close-signal check",
-   "DOGE: last 4h candle closed more than 2h ago - no new close-signal check"
-  ],
+  "notes": [],
   "exchange": "okx"
  },
  "stats": {
@@ -119,52 +116,52 @@
  },
  "radar": {
   "BTC": {
-   "price": 80488.7,
-   "ema200": 81998.16341690155,
+   "price": 80880.9,
+   "ema200": 81987.58585506289,
    "trend": "down",
    "long_trigger": 84899.6,
    "short_trigger": 79220.1,
-   "atr": 803.4254356822926
+   "atr": 792.0379045621288
   },
   "ETH": {
-   "price": 2339.57,
-   "ema200": 2492.7177497017237,
+   "price": 2358.61,
+   "ema200": 2491.4231968912463,
    "trend": "down",
    "long_trigger": 2526.4,
    "short_trigger": 2282.85,
-   "atr": 36.416765059002174
+   "atr": 35.79485326907345
   },
   "SOL": {
-   "price": 101.16,
-   "ema200": 108.00119417488148,
+   "price": 102.36,
+   "ema200": 107.94688512589956,
    "trend": "down",
    "long_trigger": 109.22,
    "short_trigger": 98.62,
-   "atr": 1.6811204130928006
+   "atr": 1.666040383586172
   },
   "XRP": {
-   "price": 1.289,
-   "ema200": 1.3740236557836616,
+   "price": 1.2996,
+   "ema200": 1.3733057246344873,
    "trend": "down",
    "long_trigger": 1.3991,
    "short_trigger": 1.2547,
-   "atr": 0.020599896229232775
+   "atr": 0.02002133221285902
   },
   "ADA": {
-   "price": 0.2064,
-   "ema200": 0.22964015719279635,
+   "price": 0.2082,
+   "ema200": 0.22942857444568276,
    "trend": "down",
    "long_trigger": 0.2306,
    "short_trigger": 0.2005,
-   "atr": 0.0046842697555820635
+   "atr": 0.004571107630183344
   },
   "DOGE": {
-   "price": 0.07713,
-   "ema200": 0.08476143170085587,
+   "price": 0.07767,
+   "ema200": 0.08469182511332295,
    "trend": "down",
    "long_trigger": 0.0838,
    "short_trigger": 0.0748,
-   "atr": 0.0014482499833600106
+   "atr": 0.0014033749845485813
   }
  },
  "welcomed": false,
