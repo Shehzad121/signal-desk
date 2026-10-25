@@ -22,7 +22,7 @@ import requests
 import yaml
 
 import data_loader
-from strategies import atr, donchian, ema
+from strategies import adx, atr, donchian, ema
 
 ROOT = Path(__file__).parent
 TF_MIN = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}
@@ -276,6 +276,8 @@ def main():
 
     for coin, group, mult in coins:
         try:
+            # a group may override strategy settings (e.g. BNB: long-only + ADX filter) via `strategy:` in config.yaml
+            ccfg = {**cfg, "strategy": {**cfg["strategy"], **cfg["groups"][group].get("strategy", {})}}
             df, ex = get_candles(coin, cfg, asof, args.offline)
             run["exchange"] = ex
             if len(df) < 300:
@@ -283,14 +285,16 @@ def main():
             run["coins_checked"].append(coin)
             has15 = any(x["status"] == "open" and x["coin"] == coin and x.get("tf") == "15m" for x in signals)
             df15 = get_candles(coin, cfg, asof, args.offline, "15m")[0] if (check_early or has15) else None
-            n = cfg["strategy"]["n"]               # "radar": how far is each coin from triggering a signal?
+            cs = ccfg["strategy"]
+            n = cs["n"]                            # "radar": how far is each coin from triggering a signal?
             ema200 = float(df["close"].ewm(span=200, adjust=False).mean().iloc[-1])
             radar[coin] = dict(price=float(df["close"].iloc[-1]), ema200=ema200, trend="up" if df["close"].iloc[-1] > ema200 else "down",
                                long_trigger=float(df["high"].iloc[-n:].max()), short_trigger=float(df["low"].iloc[-n:].min()),
-                               atr=float(atr(df).iloc[-1]))
+                               atr=float(atr(df).iloc[-1]), adx=float(adx(df).iloc[-1]), adx_min=cs.get("adx_min", 0),
+                               long_only=not cs.get("allow_short", True), sl_atr=cs["sl_atr"], tp_r=cs["tp_r"])
             for s_ in signals:                     # 1) update open signals of this coin
                 if s_["status"] == "open" and s_["coin"] == coin:
-                    s_.update(evaluate(s_, df15 if s_.get("tf") == "15m" else df, cfg))
+                    s_.update(evaluate(s_, df15 if s_.get("tf") == "15m" else df, ccfg))
                     if s_["status"] == "closed":
                         run["closed"].append(s_["id"])
                         msgs.append(msg_closed(s_))
@@ -300,15 +304,15 @@ def main():
             fresh = (now - (df.index[-1] + pd.Timedelta(minutes=TF_MIN[cfg["timeframe"]]))) <= pd.Timedelta(hours=2)
             if check_close and not fresh:
                 run["notes"].append(f"{coin}: last 4h candle closed more than 2h ago - no new close-signal check")
-            sig, note = (new_signal(coin, group, mult, df, cfg, open_risk) if (check_close and fresh) else (None, None))   # 2) new signal?
+            sig, note = (new_signal(coin, group, mult, df, ccfg, open_risk) if (check_close and fresh) else (None, None))   # 2) new signal?
             if sig is None and note is None and check_early:
-                sig, note = early_signal(coin, group, mult, df, df15, cfg, open_risk)
+                sig, note = early_signal(coin, group, mult, df, df15, ccfg, open_risk)
             if note:
                 run["notes"].append(note)
             if sig and not any(x["id"] == sig["id"] for x in signals):
                 signals.append(sig)
                 run["new"].append(sig["id"])
-                msgs.append(msg_new(sig, cfg))
+                msgs.append(msg_new(sig, ccfg))
         except Exception as e:
             run["errors"].append(f"{coin}: {e}")
 
@@ -317,7 +321,8 @@ def main():
         stats_by_mode={m: compute_stats([x for x in signals if x.get('mode', 'close') == m]) for m in ('close', 'early')},
         welcomed=state.get("welcomed", False) or (first_run and not args.dry_run and bool(os.environ.get("TELEGRAM_BOT_TOKEN"))),
         config=dict(timeframe=cfg["timeframe"], signal_mode=mode, strategy=cfg["strategy"], risk=cfg["risk"],
-                    groups={g: dict(enabled=v["enabled"], coins=v["coins"]) for g, v in cfg["groups"].items()},
+                    groups={g: dict(enabled=v["enabled"], coins=v["coins"], **({"strategy": v["strategy"]} if v.get("strategy") else {}))
+                            for g, v in cfg["groups"].items()},
                     backtest_reference=cfg["backtest_reference"]),
     )
     if now.hour == 0 and args.run_type == "close" and not args.no_summary and not first_run:

@@ -166,24 +166,30 @@ function renderRadar() {
     const px = live[coin] ?? r.price, up = r.trend === 'up';
     const trig = up ? r.long_trigger : r.short_trigger;
     const dist = Math.abs(trig / px - 1) * 100, crossed = up ? px > trig : px < trig;
-    return {coin, px, up, trig, dist, crossed, atr: r.atr};
-  }).sort((a, b) => a.dist - b.dist);
+    const blocked = !up && r.long_only;                          // e.g. BNB is long-only: no signal while the market is down
+    return {coin, px, up, trig, dist, crossed, blocked, atr: r.atr, adx: r.adx, adxMin: r.adx_min || 0, longOnly: r.long_only,
+            sl: r.sl_atr || 2, tpR: r.tp_r || 4};
+  }).sort((a, b) => (a.blocked - b.blocked) || (a.dist - b.dist));
   if (!rows.length) { $('radar').innerHTML = '<div class="empty card">Radar ka data abhi nahi.</div>'; return; }
-  const st = (S.config || {}).strategy || {sl_atr: 2, tp_r: 4};
   $('radar').innerHTML = rows.map(r => {
-    const near = Math.max(0, Math.min(100, 100 - r.dist * 20));            // 0% far .. 100% at the level
-    const chip = r.crossed ? '<span class="rchip hot">level paar - candle band hone ka intezar</span>'
+    const near = r.blocked ? 0 : Math.max(0, Math.min(100, 100 - r.dist * 20));      // 0% far .. 100% at the level
+    const chip = r.blocked ? '<span class="rchip">⛔ abhi signal nahi ban sakta</span>'
+      : r.crossed ? '<span class="rchip hot">level paar - candle band hone ka intezar</span>'
       : r.dist < 1 ? `<span class="rchip warm">🔥 ${r.dist.toFixed(2)}% door - qareeb</span>` : `<span class="rchip">⏳ ${r.dist.toFixed(1)}% door</span>`;
     let preview = '';
-    if (r.atr) {
-      const d = st.sl_atr * r.atr, side = r.up ? 1 : -1, stop = r.trig - side * d, tp = r.trig + side * d * st.tp_r;
+    if (r.atr && !r.blocked) {
+      const d = r.sl * r.atr, side = r.up ? 1 : -1, stop = r.trig - side * d, tp = r.trig + side * d * r.tpR;
       preview = `<div class="rprev"><b>Andaza (agar abhi signal bana):</b> ${r.up ? 'BUY' : 'SELL'} ≈ ${fmt(r.trig)}<br>
-        Stop-loss ≈ <span class="dn">${fmt(stop)}</span> (${r.up ? '-' : '+'}${(d / r.trig * 100).toFixed(1)}%) · Target ≈ <span class="up">${fmt(tp)}</span> (${r.up ? '+' : '-'}${(d * st.tp_r / r.trig * 100).toFixed(1)}%)</div>`;
+        Stop-loss ≈ <span class="dn">${fmt(stop)}</span> (${r.up ? '-' : '+'}${(d / r.trig * 100).toFixed(1)}%) · Target ≈ <span class="up">${fmt(tp)}</span> (${r.up ? '+' : '-'}${(d * r.tpR / r.trig * 100).toFixed(1)}%)</div>`;
     }
-    return `<div class="card rcard"><div class="rtop"><span class="coin" style="font-size:18px">${esc(r.coin)}</span><span><b>${fmt(r.px)}</b></span></div>
-      <div class="rtrend ${r.up ? 'up' : 'dn'}">${r.up ? '📈 Market tezi mein → sirf BUY (long) signal aa sakta hai' : '📉 Market mandi mein → sirf SELL (short) signal aa sakta hai'}</div>
-      <div class="sub">Signal tab bane ga jab 4h candle <b>${fmt(r.trig)}</b> ke ${r.up ? 'upar' : 'neeche'} <b>band</b> ho.</div>
-      <div class="rbar"><i style="width:${near}%"></i></div>${chip}${preview}
+    const adxLine = r.adxMin ? `<div class="sub">Trend ki taqat (ADX): <b class="${r.adx >= r.adxMin ? 'up' : 'warn'}">${r.adx.toFixed(0)}</b> - signal ke liye <b>${r.adxMin}+</b> chahiye ${r.adx >= r.adxMin ? '✅' : '⏳'}</div>` : '';
+    const trendTxt = r.blocked ? '📉 Market mandi mein, aur ' + esc(r.coin) + ' ke liye sirf BUY allowed hai → SELL signal nahi aayega'
+      : r.up ? '📈 Market tezi mein → sirf BUY (long) signal aa sakta hai' : '📉 Market mandi mein → sirf SELL (short) signal aa sakta hai';
+    return `<div class="card rcard"><div class="rtop"><span class="coin" style="font-size:18px">${esc(r.coin)}${r.longOnly ? ' <span class="badge" title="Is coin par sirf BUY signals">sirf long</span>' : ''}</span><span><b>${fmt(r.px)}</b></span></div>
+      <div class="rtrend ${r.blocked ? '' : r.up ? 'up' : 'dn'}">${trendTxt}</div>
+      ${r.blocked ? '<div class="sub">Market upar palte (price EMA200 ke upar jaye) to phir BUY level dekha jayega.</div>'
+        : `<div class="sub">Signal tab bane ga jab 4h candle <b>${fmt(r.trig)}</b> ke ${r.up ? 'upar' : 'neeche'} <b>band</b> ho.</div>`}
+      ${adxLine}<div class="rbar"><i style="width:${near}%"></i></div>${chip}${preview}
       <div class="rnow">Abhi: <b>koi trade nahi</b> - wait karo</div></div>`;
   }).join('');
 }
