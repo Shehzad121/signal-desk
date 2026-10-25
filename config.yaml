@@ -33,7 +33,7 @@ groups:
   bnb:               # user's main trading coin. Default settings were weak on BNB (-0.05R out-of-sample), so BNB uses its own
     enabled: true    # settings picked on 2019-2023 and checked on unseen 2023-2026: long-only (BNB shorts lost money) + ADX>=20 trend filter.
     risk_multiplier: 1.0   # Edge is small and not statistically proven (t<1) -> judge it by its live record on the dashboard.
-    strategy: {n: 40, adx_min: 20, sl_atr: 3, tp_r: 4, allow_short: false}   # sl 3 ATR: more robust than 2 (PF 1.83, 7/8 years positive)
+    strategy: {n: 40, adx_min: 20, sl_atr: 3, tp_r: 0, trail_atr: 4.5, max_hold_days: 20, allow_short: false}   # trailing stop, no fixed target (walk-forward: +0.18R, PF 1.47)
     coins: [BNB]
   weaker_majors:     # tested but weaker in walk-forward -> off by default
     enabled: false

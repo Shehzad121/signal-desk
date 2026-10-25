@@ -149,7 +149,7 @@ async function load() {
 async function loadBacktest() {
   let B; try { B = await (await fetch('backtest.json?t=' + Date.now())).json(); } catch (e) { $('bt').innerHTML = '<div class="empty">Backtest file nahi mili.</div>'; return; }
   const st = B.stats, rows = [...B.signals].sort((a,b) => b.exit_time.localeCompare(a.exit_time));
-  const why = {target: '✅ target', stop: '❌ stop', time: '⏱ deadline'};
+  const why = {target: '✅ target', stop: '❌ stop', trail: '🔒 trailing stop', time: '⏱ deadline'};
   $('bt').innerHTML = `<div class="sub" style="margin-bottom:8px">Ye <b>purani price par simulation</b> hai (asli signals nahi). ${esc(B.from.slice(0,10))} se ${esc(B.to.slice(0,10))} tak.</div>
     <div class="grid"><div class="stat"><div class="k">Signals</div><div class="v">${st.closed}</div></div>
     <div class="stat"><div class="k">Kitne jeete</div><div class="v">${Math.round(st.win_rate*100)}%</div></div>
@@ -169,7 +169,7 @@ function renderRadar() {
     const blocked = !up && r.long_only;                          // e.g. BNB is long-only: no signal while the market is down
     const emaGap = r.ema200 ? Math.abs(px / r.ema200 - 1) * 100 : 99;
     return {coin, px, up, trig, dist, crossed, blocked, emaGap, atr: r.atr, adx: r.adx, adxMin: r.adx_min || 0, longOnly: r.long_only,
-            sl: r.sl_atr || 2, tpR: r.tp_r || 4};
+            sl: r.sl_atr || 2, tpR: r.tp_r || 4, trail: r.trail_atr || 0};
   }).sort((a, b) => (a.blocked - b.blocked) || (a.dist - b.dist));
   if (!rows.length) { $('radar').innerHTML = '<div class="empty card">Radar ka data abhi nahi.</div>'; return; }
   $('radar').innerHTML = rows.map(r => {
@@ -180,8 +180,9 @@ function renderRadar() {
     let preview = '';
     if (r.atr && !r.blocked) {
       const d = r.sl * r.atr, side = r.up ? 1 : -1, stop = r.trig - side * d, tp = r.trig + side * d * r.tpR;
+      const tgtTxt = r.trail ? `Target nahi: <b>trailing stop</b> (${(r.trail * r.atr / r.trig * 100).toFixed(1)}% callback) price ke saath chalta hai` : `Target ≈ <span class="up">${fmt(tp)}</span> (${r.up ? '+' : '-'}${(d * r.tpR / r.trig * 100).toFixed(1)}%)`;
       preview = `<div class="rprev"><b>Andaza (agar abhi signal bana):</b> ${r.up ? 'BUY' : 'SELL'} ≈ ${fmt(r.trig)}<br>
-        Stop-loss ≈ <span class="dn">${fmt(stop)}</span> (${r.up ? '-' : '+'}${(d / r.trig * 100).toFixed(1)}%) · Target ≈ <span class="up">${fmt(tp)}</span> (${r.up ? '+' : '-'}${(d * r.tpR / r.trig * 100).toFixed(1)}%)</div>`;
+        Stop-loss ≈ <span class="dn">${fmt(stop)}</span> (${r.up ? '-' : '+'}${(d / r.trig * 100).toFixed(1)}%) · ${tgtTxt}</div>`;
     }
     const adxLine = r.adxMin ? `<div class="sub">Trend ki taqat (ADX): <b class="${r.adx >= r.adxMin ? 'up' : 'warn'}">${r.adx.toFixed(0)}</b> - signal ke liye <b>${r.adxMin}+</b> chahiye ${r.adx >= r.adxMin ? '✅' : '⏳'}</div>` : '';
     const choppy = !r.blocked && (r.emaGap < 1.5 || (r.adxMin && r.adx < r.adxMin));   // price hugging EMA200 / weak trend
@@ -226,8 +227,8 @@ function render() {
 
 const pnlR = (s, px) => s.side * (px - s.entry_eff) / s.dist;
 function verdict(r, s) {
-  if (r >= s.tp_r * .75) return ['Target ke bilkul qareeb 🎯', 'Stop-loss/target orders laga rehne do, khud band ho jayegi.', 'up'];
-  if (r > 0.3) return ['Profit mein hai ✅', 'Wait karo. Kuch karne ki zaroorat nahi.', 'up'];
+  if (s.tp && r >= (s.tp_r || 4) * .75) return ['Target ke bilkul qareeb 🎯', 'Stop-loss/target orders laga rehne do, khud band ho jayegi.', 'up'];
+  if (r > 0.3) return ['Profit mein hai ✅', s.trail_dist ? 'Wait karo. Trailing stop price ke saath chal kar profit lock karta jayega.' : 'Wait karo. Kuch karne ki zaroorat nahi.', 'up'];
   if (r >= -0.3) return ['Abhi barabar hai', 'Wait karo. Orders laga rehne do.', ''];
   if (r > -0.8) return ['Thora nuksan mein hai', 'Wait karo. Stop-loss na hilao, wahi tumhari hifazat hai.', 'warn'];
   return ['Stop-loss ke qareeb ⚠️', 'Stop-loss khud lag jayega. Usay peeche mat khiskana.', 'dn'];
@@ -239,7 +240,8 @@ function renderOpen() {
   $('open').innerHTML = open.map(s => {
     const long = s.side === 1, px = live[s.coin] ?? s.last_price, r = pnlR(s, px), v = verdict(r, s);
     const left = s.deadline ? dur(new Date(s.deadline) - Date.now()) : '';
-    const sp = (s.stop / s.entry - 1) * 100, tpp = (s.tp / s.entry - 1) * 100;
+    const trailing = !!s.trail_dist, sp = ((trailing ? s.stop0 : s.stop) / s.entry - 1) * 100, tpp = s.tp ? (s.tp / s.entry - 1) * 100 : 0;
+    const rate = trailing ? Math.max(0.1, Math.min(10, s.trail_dist / s.entry * 100)) : 0;
     const num = (n) => `<span class="val" data-copy="${raw(n)}" title="Copy">${fmt(n)}</span>`;
     return `<div class="card sig">
       <div class="sig-h ${long?'long':'short'}"><span class="coin">${esc(s.coin)}${s.mode==='early'?' <span class="badge" title="4h candle abhi band nahi hui - false signal ka chance zyada">⚡ JALDI</span>':''}</span><span class="side ${long?'up':'dn'}">${long?'LONG - BUY':'SHORT - SELL'}</span></div>
@@ -247,8 +249,10 @@ function renderOpen() {
         <small>Abhi price: <b>${fmt(px)}</b> ${live[s.coin]?'<span class="up">(live, Binance USDT)</span>':'<span class="warn">(live nahi - bot ki aakhri candle ki price)</span>'} · Signal ki entry: <b>${fmt(s.entry)}</b> (${sgn(((px/s.entry-1)*100).toFixed(2))}%)</small></div>
       <ol class="steps">
         <li><div><b>Entry lo</b>Abhi market price par ${long?'buy':'sell (short)'} karo ${num(s.entry)}</div></li>
-        <li><div><b>Stop-loss lagao (zaroori!)</b>Entry ke saath hi: ${num(s.stop)} <span class="sub">(${sgn(sp.toFixed(1))}% · yahan band = nuksan -1R)</span></div></li>
-        <li><div><b>Take-profit lagao</b>${num(s.tp)} <span class="sub">(${sgn(tpp.toFixed(1))}% · yahan band = profit +${s.tp_r}R)</span></div></li>
+        <li><div><b>Stop-loss lagao (zaroori!)</b>Entry ke saath hi: ${num(trailing ? s.stop0 : s.stop)} <span class="sub">(${sgn(sp.toFixed(1))}% · yahan band = nuksan -1R)</span></div></li>
+        ${trailing
+          ? `<li><div><b>Target nahi - Trailing stop</b>Exchange par <i>Trailing Stop</i> order lagao, callback rate <span class="val" data-copy="${rate.toFixed(1)}">${rate.toFixed(1)}%</span>. Ye price ke saath upar chalta hai aur profit lock karta hai. <span class="sub">Abhi trailing stop level: <b>${fmt(s.stop)}</b></span></div></li>`
+          : `<li><div><b>Take-profit lagao</b>${num(s.tp)} <span class="sub">(${sgn(tpp.toFixed(1))}% · yahan band = profit +${s.tp_r}R)</span></div></li>`}
         <li><div><b>Deadline</b>${s.deadline ? dt(s.deadline) + ` (${left} baqi)` : ''}. Tab tak dono na lagen to position khud band kar do.</div></li>
       </ol>
       <div class="sub" style="padding:0 16px 8px">Risk: account ka ${s.risk_pct}% → position ≈ ${s.size_pct}% of account (${(s.size_pct/100).toFixed(2)}x leverage). Numbers par click karo = copy.</div>
@@ -269,17 +273,18 @@ async function drawChart(s) {
   }
   const k = klines[s.coin]; if (!k) { el.innerHTML = '<div class="sub" style="text-align:center">(chart ke liye Binance price load nahi hui)</div>'; return; }
   const W = 720, H = 260, L = 8, R = 70, T = 10, B = 16;
-  const hi = Math.max(s.tp, s.stop, ...k.map(c => +c[2])), lo = Math.min(s.tp, s.stop, ...k.map(c => +c[3]));
+  const lv = [s.tp, s.stop, s.stop0, s.entry].filter(v => v != null);
+  const hi = Math.max(...lv, ...k.map(c => +c[2])), lo = Math.min(...lv, ...k.map(c => +c[3]));
   const pad = (hi - lo) * .05, y = p => T + (hi + pad - p) / (hi - lo + 2*pad) * (H - T - B);
   const cw = (W - L - R) / k.length, x = i => L + i * cw + cw / 2;
   const css = getComputedStyle(document.documentElement), up = css.getPropertyValue('--up'), dn = css.getPropertyValue('--dn'), mute = css.getPropertyValue('--mute');
   const t0 = new Date(s.signal_candle).getTime(); const si = Math.max(0, k.findIndex(c => c[0] >= t0));
   const zone = (a, b, col) => `<rect x="${L}" y="${Math.min(y(a),y(b))}" width="${W-L-R}" height="${Math.abs(y(a)-y(b))}" fill="${col}" opacity=".12"/>`;
   const line = (p, col, label) => `<line x1="${L}" x2="${W-R}" y1="${y(p)}" y2="${y(p)}" stroke="${col}" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${W-R+4}" y="${y(p)+4}" fill="${col}" font-size="12" font-weight="700">${label}</text>`;
-  let g = zone(s.entry, s.tp, up) + zone(s.entry, s.stop, dn);
+  let g = (s.tp ? zone(s.entry, s.tp, up) : '') + zone(s.entry, s.stop0 ?? s.stop, dn);
   k.forEach((c, i) => { const col = +c[4] >= +c[1] ? up : dn;
     g += `<line x1="${x(i)}" x2="${x(i)}" y1="${y(+c[2])}" y2="${y(+c[3])}" stroke="${col}"/><rect x="${x(i)-cw*.32}" y="${y(Math.max(+c[1],+c[4]))}" width="${cw*.64}" height="${Math.max(1,Math.abs(y(+c[1])-y(+c[4])))}" fill="${col}"/>`; });
-  g += line(s.tp, up, 'TARGET') + line(s.entry, mute, 'ENTRY') + line(s.stop, dn, 'STOP');
+  g += (s.tp ? line(s.tp, up, 'TARGET') : '') + line(s.entry, mute, 'ENTRY') + line(s.stop, dn, s.trail_dist ? 'TRAIL STOP' : 'STOP');
   g += `<line x1="${x(si)}" x2="${x(si)}" y1="${T}" y2="${H-B}" stroke="${mute}" stroke-dasharray="2 3"/><text x="${x(si)+4}" y="${T+10}" fill="${mute}" font-size="11">signal</text>`;
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(s.coin)} chart">${g}</svg>`;
 }
@@ -307,7 +312,7 @@ function renderHist() {
   const rows = S.signals.filter(s => s.status === 'closed' && (!fc || s.coin === fc) && (!fs || s.side == fs)).sort((a,b) => b.exit_time.localeCompare(a.exit_time));
   $('histCount').textContent = rows.length + ' signals';
   if (!rows.length) { $('hist').innerHTML = '<div class="empty">Abhi kuch band nahi hua.</div>'; return; }
-  const why = {target: '✅ target', stop: '❌ stop', time: '⏱ deadline'};
+  const why = {target: '✅ target', stop: '❌ stop', trail: '🔒 trailing stop', time: '⏱ deadline'};
   $('hist').innerHTML = '<table><thead><tr><th>Band hua</th><th>Coin</th><th>Side</th><th>Entry</th><th>Exit</th><th>Kaise</th><th>Natija</th></tr></thead><tbody>' +
     rows.slice(0, 100).map(s => `<tr><td>${dt(s.exit_time).slice(0,16)}</td><td><b>${esc(s.coin)}</b></td>
     <td><span class="badge ${s.side===1?'long':'short'}">${s.side===1?'LONG':'SHORT'}${s.mode==='early'?' ⚡':''}</span></td><td>${fmt(s.entry)}</td><td>${fmt(s.exit_price)}</td>

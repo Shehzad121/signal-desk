@@ -60,8 +60,12 @@ def get_candles(coin, cfg, asof, offline, tf=None):
 
 # ----------------------------------------------------------------------------- trade tracking
 def evaluate(sig, df, cfg):
-    """Replay a signal over the candles after it. Same rules as engine.simulate. Returns updates dict."""
-    side, stop, tp = sig["side"], sig["stop"], sig["tp"]
+    """Replay a signal over the candles after it. Same rules as engine.simulate (incl. trailing stop).
+    Returns updates dict."""
+    side, tp = sig["side"], sig.get("tp")
+    trail = bool(sig.get("trail_dist"))
+    stop = sig.get("stop0", sig["stop"]) if trail else sig["stop"]
+    tdist = sig.get("trail_dist") or 0.0
     entry, dist = sig["entry_eff"], sig["dist"]
     fee, slip = cfg["costs"]["fee"], cfg["costs"]["slippage"]
     max_bars = int(cfg["strategy"]["max_hold_days"] * 1440 / TF_MIN[sig.get("tf", cfg["timeframe"])])
@@ -73,22 +77,30 @@ def evaluate(sig, df, cfg):
         if side == 1:
             if o <= stop or l <= stop:
                 exit_px, reason = min(o, stop) * (1 - slip), "stop"
-            elif h >= tp:
+            elif tp is not None and h >= tp:
                 exit_px, reason = (max(o, tp) if k > 1 else tp), "target"
+            elif trail:
+                stop = max(stop, h - tdist)
         else:
             if o >= stop or h >= stop:
                 exit_px, reason = max(o, stop) * (1 + slip), "stop"
-            elif l <= tp:
+            elif tp is not None and l <= tp:
                 exit_px, reason = (min(o, tp) if k > 1 else tp), "target"
+            elif trail:
+                stop = min(stop, l + tdist)
         if exit_px is None and k == max_bars:
             exit_px, reason = c * (1 - slip * side), "time"
         if exit_px is not None:
             exit_ts = ts
             break
     upd = {"bars_held": k}
+    if trail:
+        upd["stop"] = float(stop)                      # current trailing stop level
     if exit_px is None:
         upd["last_price"] = float(after["close"].iloc[-1]) if len(after) else sig["entry"]
         return upd
+    if reason == "stop" and trail and ((side == 1 and stop > entry) or (side == -1 and stop < entry)):
+        reason = "trail"                               # trailing stop hit while in profit
     gross = side * (exit_px - entry) / dist
     upd.update(status="closed", exit_price=float(exit_px), exit_reason=reason, exit_time=exit_ts.isoformat(),
                R=round(float(gross - fee * (entry + exit_px) / dist), 3))
@@ -103,14 +115,20 @@ def _build(coin, group, mult, side, close, a, cand, tf, mode, cfg, open_risk):
     if open_risk + eff * 100 > rk["max_open_risk_pct"] + 1e-9:
         return None, f"{coin} {'LONG' if side == 1 else 'SHORT'} skipped (open-risk cap {rk['max_open_risk_pct']}%)"
     end = cand + pd.Timedelta(minutes=TF_MIN[tf])
-    return dict(
+    trail_atr = st.get("trail_atr", 0) or 0
+    stop0 = entry_eff - side * dist
+    sig = dict(
         id=f"{coin}-{cand:%Y%m%d%H%M}-{tf}", symbol=f"{coin}/USDT", coin=coin, group=group, tf=tf, mode=mode,
         side=side, status="open", signal_candle=cand.isoformat(), signal_time=end.isoformat(),
-        entry=close, entry_eff=entry_eff, stop=entry_eff - side * dist, tp=entry_eff + side * dist * st["tp_r"],
-        dist=dist, risk_pct=round(eff * 100, 3), size_pct=round(eff / (dist / entry_eff) * 100, 1),
-        tp_r=st["tp_r"], bars_held=0, last_price=close,
+        entry=close, entry_eff=entry_eff, stop=stop0, dist=dist, risk_pct=round(eff * 100, 3),
+        size_pct=round(eff / (dist / entry_eff) * 100, 1), bars_held=0, last_price=close,
         deadline=(end + pd.Timedelta(days=st["max_hold_days"])).isoformat(),
-    ), None
+    )
+    if trail_atr:      # no fixed target: a trailing stop follows price and locks in profit
+        sig.update(tp=None, tp_r=None, stop0=stop0, trail_atr=trail_atr, trail_dist=trail_atr * a)
+    else:
+        sig.update(tp=entry_eff + side * dist * st["tp_r"], tp_r=st["tp_r"])
+    return sig, None
 
 
 def new_signal(coin, group, mult, df, cfg, open_risk):
@@ -197,27 +215,44 @@ def send(text, dry):
 def msg_new(s, cfg):
     long_ = s["side"] == 1
     d, icon = ("LONG (BUY)", "🟢") if long_ else ("SHORT (SELL)", "🔴")
-    sp, tp_ = (s["stop"] / s["entry"] - 1) * 100, (s["tp"] / s["entry"] - 1) * 100   # signed: short stop is ABOVE entry
+    stop0 = s.get("stop0", s["stop"])
+    sp = (stop0 / s["entry"] - 1) * 100
     dl = pd.Timestamp(s["deadline"]).strftime("%d %b %H:%M UTC")
-    return (f"{icon} <b>NAYA SIGNAL: {d} {html.escape(s['symbol'])}</b>\n\n"
+    head = (f"{icon} <b>NAYA SIGNAL: {d} {html.escape(s['symbol'])}</b>\n\n"
             f"1️⃣ <b>Entry:</b> abhi market price par {'buy' if long_ else 'sell/short'} karo (≈ <code>{fmt(s['entry'])}</code>)\n"
-            f"2️⃣ <b>Stop-loss</b> foran lagao: <code>{fmt(s['stop'])}</code> ({sp:+.1f}%)\n"
-            f"3️⃣ <b>Take-profit</b> lagao: <code>{fmt(s['tp'])}</code> ({tp_:+.1f}%)\n"
-            f"4️⃣ <b>Deadline:</b> {dl} tak stop ya target na lage to position khud band kar do\n\n"
-            f"💰 Risk: account ka {s['risk_pct']}% → position ≈ {s['size_pct']}% of account ({s['size_pct'] / 100:.2f}x)\n"
-            f"Stop-loss ya target lagte hi position khud band ho jati hai. Bot khud trade nahi karta."
-            + ("\n\n⚡ <b>JALDI ALERT:</b> 4h candle abhi band nahi hui, isliye false signal ka chance thora zyada hai "
-               "(backtest mein is ka edge ~30% kam tha)." if s.get("mode") == "early" else ""))
+            f"2️⃣ <b>Stop-loss</b> foran lagao: <code>{fmt(stop0)}</code> ({sp:+.1f}%)\n")
+    if s.get("trail_dist"):
+        rate = max(0.1, min(10.0, s["trail_dist"] / s["entry"] * 100))
+        mid = (f"3️⃣ <b>Target nahi hai - Trailing stop:</b> exchange par <i>Trailing Stop</i> order lagao, callback rate ≈ <b>{rate:.1f}%</b>. "
+               f"Ye price ke saath saath chalta hai aur profit lock karta hai; price palatne par khud band.\n"
+               f"4️⃣ <b>Deadline:</b> {dl} tak band na ho to position khud band kar do\n\n")
+    else:
+        tp_ = (s["tp"] / s["entry"] - 1) * 100
+        mid = (f"3️⃣ <b>Take-profit</b> lagao: <code>{fmt(s['tp'])}</code> ({tp_:+.1f}%)\n"
+               f"4️⃣ <b>Deadline:</b> {dl} tak stop ya target na lage to position khud band kar do\n\n")
+    tail = (f"💰 Risk: account ka {s['risk_pct']}% → position ≈ {s['size_pct']}% of account ({s['size_pct'] / 100:.2f}x)\n"
+            f"Bot khud trade nahi karta.")
+    early = ("\n\n⚡ <b>JALDI ALERT:</b> 4h candle abhi band nahi hui, isliye false signal ka chance thora zyada hai "
+             "(backtest mein is ka edge ~30% kam tha)." if s.get("mode") == "early" else "")
+    return head + mid + tail + early
 
 
 def msg_closed(s):
-    icon = {"target": "✅", "stop": "❌", "time": "⏱"}[s["exit_reason"]]
+    icon = {"target": "✅", "stop": "❌", "trail": "🔒", "time": "⏱"}[s["exit_reason"]]
     d = "LONG" if s["side"] == 1 else "SHORT"
     why = {"target": "Target lag gaya (profit)", "stop": "Stop-loss lag gaya (nuksan)",
+           "trail": "Trailing stop lag gaya (profit lock hua)",
            "time": "Deadline poori - agar position khuli hai to ab band kar do"}[s["exit_reason"]]
     return (f"{icon} <b>{d} {html.escape(s['symbol'])} band</b>\n{why}\n"
             f"Exit ≈ <code>{fmt(s['exit_price'])}</code> · natija <b>{s['R']:+.2f}R</b> "
             f"(1R = jitna risk liya tha)")
+
+
+def msg_trail(s):
+    d = "LONG" if s["side"] == 1 else "SHORT"
+    return (f"🔒 <b>{d} {html.escape(s['symbol'])}: trailing stop badla</b>\n"
+            f"Naya stop ≈ <code>{fmt(s['stop'])}</code>. Agar tum ne exchange ka Trailing Stop order lagaya hai to kuch nahi karna; "
+            f"warna manual stop yahan le aao.")
 
 
 def msg_summary(state):
@@ -291,13 +326,18 @@ def main():
             radar[coin] = dict(price=float(df["close"].iloc[-1]), ema200=ema200, trend="up" if df["close"].iloc[-1] > ema200 else "down",
                                long_trigger=float(df["high"].iloc[-n:].max()), short_trigger=float(df["low"].iloc[-n:].min()),
                                atr=float(atr(df).iloc[-1]), adx=float(adx(df).iloc[-1]), adx_min=cs.get("adx_min", 0),
-                               long_only=not cs.get("allow_short", True), sl_atr=cs["sl_atr"], tp_r=cs["tp_r"])
+                               long_only=not cs.get("allow_short", True), sl_atr=cs["sl_atr"], tp_r=cs.get("tp_r"), trail_atr=cs.get("trail_atr", 0))
             for s_ in signals:                     # 1) update open signals of this coin
                 if s_["status"] == "open" and s_["coin"] == coin:
                     s_.update(evaluate(s_, df15 if s_.get("tf") == "15m" else df, ccfg))
                     if s_["status"] == "closed":
                         run["closed"].append(s_["id"])
                         msgs.append(msg_closed(s_))
+                    elif s_.get("trail_dist"):
+                        step = s_["trail_dist"] / s_["trail_atr"]          # 1 ATR at signal time
+                        if abs(s_["stop"] - s_.get("notified_stop", s_["stop0"])) >= step:
+                            s_["notified_stop"] = s_["stop"]
+                            msgs.append(msg_trail(s_))
             if any(x["status"] == "open" and x["coin"] == coin for x in signals):
                 continue
             open_risk = sum(x["risk_pct"] for x in signals if x["status"] == "open")
