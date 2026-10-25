@@ -93,16 +93,17 @@
    "deadline": "2026-10-27T16:00:00+00:00"
   }
  ],
- "updated": "2026-10-25T05:44:08.504623+00:00",
+ "updated": "2026-10-25T05:53:58.099899+00:00",
  "last_run": {
-  "time": "2026-10-25T05:44:08.504623+00:00",
+  "time": "2026-10-25T05:53:58.099899+00:00",
   "coins_checked": [
    "BTC",
    "ETH",
    "SOL",
    "XRP",
    "ADA",
-   "DOGE"
+   "DOGE",
+   "BNB"
   ],
   "errors": [],
   "new": [],
@@ -121,7 +122,12 @@
    "trend": "down",
    "long_trigger": 84899.6,
    "short_trigger": 79220.1,
-   "atr": 756.8494828076907
+   "atr": 756.8494828076907,
+   "adx": 28.958646854279202,
+   "adx_min": 0,
+   "long_only": false,
+   "sl_atr": 2,
+   "tp_r": 4
   },
   "ETH": {
    "price": 2362.66,
@@ -129,7 +135,12 @@
    "trend": "down",
    "long_trigger": 2526.4,
    "short_trigger": 2282.85,
-   "atr": 34.3887923212825
+   "atr": 34.3887923212825,
+   "adx": 29.766053643185412,
+   "adx_min": 0,
+   "long_only": false,
+   "sl_atr": 2,
+   "tp_r": 4
   },
   "SOL": {
    "price": 102.43,
@@ -137,7 +148,12 @@
    "trend": "down",
    "long_trigger": 109.22,
    "short_trigger": 98.62,
-   "atr": 1.5856089276157306
+   "atr": 1.5856089276157306,
+   "adx": 20.77923403623763,
+   "adx_min": 0,
+   "long_only": false,
+   "sl_atr": 2,
+   "tp_r": 4
   },
   "XRP": {
    "price": 1.311,
@@ -145,7 +161,12 @@
    "trend": "down",
    "long_trigger": 1.3991,
    "short_trigger": 1.2547,
-   "atr": 0.019648379911940513
+   "atr": 0.019648379911940513,
+   "adx": 23.454201991656337,
+   "adx_min": 0,
+   "long_only": false,
+   "sl_atr": 2,
+   "tp_r": 4
   },
   "ADA": {
    "price": 0.2079,
@@ -153,7 +174,12 @@
    "trend": "down",
    "long_trigger": 0.2306,
    "short_trigger": 0.2005,
-   "atr": 0.004366028513741678
+   "atr": 0.004366028513741678,
+   "adx": 34.2317648681504,
+   "adx_min": 0,
+   "long_only": false,
+   "sl_atr": 2,
+   "tp_r": 4
   },
   "DOGE": {
    "price": 0.07788,
@@ -161,7 +187,25 @@
    "trend": "down",
    "long_trigger": 0.0838,
    "short_trigger": 0.0748,
-   "atr": 0.001336705342795111
+   "atr": 0.001336705342795111,
+   "adx": 30.873556843010658,
+   "adx_min": 0,
+   "long_only": false,
+   "sl_atr": 2,
+   "tp_r": 4
+  },
+  "BNB": {
+   "price": 745.5,
+   "ema200": 741.3395277050089,
+   "trend": "up",
+   "long_trigger": 751.9,
+   "short_trigger": 705.8,
+   "atr": 8.148896002633423,
+   "adx": 16.99607103123999,
+   "adx_min": 20,
+   "long_only": true,
+   "sl_atr": 2,
+   "tp_r": 4
   }
  },
  "welcomed": true,
@@ -193,10 +237,22 @@
      "DOGE"
     ]
    },
+   "bnb": {
+    "enabled": true,
+    "coins": [
+     "BNB"
+    ],
+    "strategy": {
+     "n": 40,
+     "adx_min": 20,
+     "sl_atr": 2,
+     "tp_r": 4,
+     "allow_short": false
+    }
+   },
    "weaker_majors": {
     "enabled": false,
     "coins": [
-     "BNB",
      "LINK"
     ]
    },
