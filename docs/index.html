@@ -167,7 +167,8 @@ function renderRadar() {
     const trig = up ? r.long_trigger : r.short_trigger;
     const dist = Math.abs(trig / px - 1) * 100, crossed = up ? px > trig : px < trig;
     const blocked = !up && r.long_only;                          // e.g. BNB is long-only: no signal while the market is down
-    return {coin, px, up, trig, dist, crossed, blocked, atr: r.atr, adx: r.adx, adxMin: r.adx_min || 0, longOnly: r.long_only,
+    const emaGap = r.ema200 ? Math.abs(px / r.ema200 - 1) * 100 : 99;
+    return {coin, px, up, trig, dist, crossed, blocked, emaGap, atr: r.atr, adx: r.adx, adxMin: r.adx_min || 0, longOnly: r.long_only,
             sl: r.sl_atr || 2, tpR: r.tp_r || 4};
   }).sort((a, b) => (a.blocked - b.blocked) || (a.dist - b.dist));
   if (!rows.length) { $('radar').innerHTML = '<div class="empty card">Radar ka data abhi nahi.</div>'; return; }
@@ -183,10 +184,12 @@ function renderRadar() {
         Stop-loss ≈ <span class="dn">${fmt(stop)}</span> (${r.up ? '-' : '+'}${(d / r.trig * 100).toFixed(1)}%) · Target ≈ <span class="up">${fmt(tp)}</span> (${r.up ? '+' : '-'}${(d * r.tpR / r.trig * 100).toFixed(1)}%)</div>`;
     }
     const adxLine = r.adxMin ? `<div class="sub">Trend ki taqat (ADX): <b class="${r.adx >= r.adxMin ? 'up' : 'warn'}">${r.adx.toFixed(0)}</b> - signal ke liye <b>${r.adxMin}+</b> chahiye ${r.adx >= r.adxMin ? '✅' : '⏳'}</div>` : '';
-    const trendTxt = r.blocked ? '📉 Market mandi mein, aur ' + esc(r.coin) + ' ke liye sirf BUY allowed hai → SELL signal nahi aayega'
+    const choppy = !r.blocked && (r.emaGap < 1.5 || (r.adxMin && r.adx < r.adxMin));   // price hugging EMA200 / weak trend
+    const trendTxt = choppy ? `⚖️ Market sideways / trend kamzor (price EMA200 ke ${r.emaGap.toFixed(1)}% andar${r.adx ? ', ADX ' + r.adx.toFixed(0) : ''}) → signal kam aur kamzor hote hain`
+      : r.blocked ? '📉 Market mandi mein, aur ' + esc(r.coin) + ' ke liye sirf BUY allowed hai → SELL signal nahi aayega'
       : r.up ? '📈 Market tezi mein → sirf BUY (long) signal aa sakta hai' : '📉 Market mandi mein → sirf SELL (short) signal aa sakta hai';
     return `<div class="card rcard"><div class="rtop"><span class="coin" style="font-size:18px">${esc(r.coin)}${r.longOnly ? ' <span class="badge" title="Is coin par sirf BUY signals">sirf long</span>' : ''}</span><span><b>${fmt(r.px)}</b></span></div>
-      <div class="rtrend ${r.blocked ? '' : r.up ? 'up' : 'dn'}">${trendTxt}</div>
+      <div class="rtrend ${r.blocked || choppy ? '' : r.up ? 'up' : 'dn'}">${trendTxt}</div>
       ${r.blocked ? '<div class="sub">Market upar palte (price EMA200 ke upar jaye) to phir BUY level dekha jayega.</div>'
         : `<div class="sub">Signal tab bane ga jab 4h candle <b>${fmt(r.trig)}</b> ke ${r.up ? 'upar' : 'neeche'} <b>band</b> ho.</div>`}
       ${adxLine}<div class="rbar"><i style="width:${near}%"></i></div>${chip}${preview}
