@@ -78,9 +78,9 @@ button.theme{background:var(--card);border:1px solid var(--line);color:var(--mut
 <main>
 <div class="top">
   <div><h1>Signal Desk</h1><div class="sub" id="status">Loading…</div><div class="sub" id="live"></div></div>
-  <div class="tools"><label class="sub" for="tfSel">Chart / timer:</label>
-    <select id="tfSel" title="Sirf dikhane ke liye (chart aur countdown). Bot ka asli timeframe config.yaml mein hai.">
-      <option value="15m">15 minute</option><option value="1h">1 ghanta</option><option value="4h" selected>4 ghante (bot ka)</option></select>
+  <div class="tools"><label class="sub" for="tfSel">Timeframe:</label>
+    <select id="tfSel" title="Har timeframe ke apne signals aur record hain">
+      <option value="all">Sab</option><option value="1h">1 ghanta</option><option value="2h">2 ghante</option><option value="4h">4 ghante</option></select>
     <button class="theme" id="theme" type="button">Theme</button></div>
 </div>
 
@@ -95,8 +95,8 @@ button.theme{background:var(--card);border:1px solid var(--line);color:var(--mut
 <details class="card">
   <summary>Ye kaise kaam karta hai? (30 second)</summary>
   <ol>
-    <li>Bot har <b>4 ghante</b> baad market check karta hai (jab 4h candle band hoti hai).</li>
-    <li>Agar price pichle 40 candles ki sab se oonchi (ya neeche) jagah tod de aur bara trend usi taraf ho, to <b>signal</b> aata hai.</li>
+    <li>Bot <b>teen timeframes</b> (1h, 2h, 4h) par alag alag market check karta hai, har ghante. Upar dropdown se chuno kaunsa timeframe dekhna hai. Har timeframe ke apne signals aur apna record hai.</li>
+    <li>Agar price pichle ~1 hafte ki sab se oonchi (ya neeche) jagah tod de aur bara trend usi taraf ho, to <b>signal</b> aata hai (1h/2h par sirf BUY).</li>
     <li>Signal par tum <b>entry</b> lete ho aur <b>stop-loss + take-profit</b> dono usi waqt exchange par laga dete ho. Phir kuch nahi karna: price jahan pehle lage wahan position khud band.</li>
     <li>Agar 3 din tak dono na lagen to deadline par khud band kar do.</li>
     <li><b>R</b> = jitna risk liya. Stop lage to -1R, target lage to +4R. Sirf 35-40% trades jeetti hain, lekin jeet haar se 4 guna bari hoti hai, isi se edge banta hai.</li>
@@ -134,11 +134,14 @@ const dt = iso => new Date(iso).toISOString().slice(0,16).replace('T',' ') + ' U
 const dur = ms => { const m = Math.max(0, Math.round(ms/60000)); return m < 60 ? m + ' min' : m < 2880 ? Math.floor(m/60) + ' ghante ' + (m%60) + ' min' : Math.floor(m/1440) + ' din ' + Math.floor(m%1440/60) + ' ghante'; };
 const HOSTS = ['https://api.binance.com', 'https://data-api.binance.vision'];
 let S = null, live = {}, klines = {}, liveAt = null;
-const TFMIN = {'15m': 15, '1h': 60, '4h': 240};
-let tf = '4h';
-try { const t = localStorage.getItem('tf'); if (TFMIN[t]) tf = t; } catch(e) {}
-$('tfSel').value = tf;
-$('tfSel').onchange = () => { tf = $('tfSel').value; try { localStorage.setItem('tf', tf); } catch(e) {} if (S) { render(); } };
+const TFMIN = {'15m': 15, '30m': 30, '1h': 60, '2h': 120, '4h': 240};
+let view = 'all';
+try { const t = localStorage.getItem('view'); if (t) view = t; } catch(e) {}
+$('tfSel').value = view; if ($('tfSel').value !== view) { view = 'all'; $('tfSel').value = 'all'; }
+$('tfSel').onchange = () => { view = $('tfSel').value; try { localStorage.setItem('view', view); } catch(e) {} if (S) render(); };
+const sOf = x => x.stream || (['4h', '15m'].includes(x.tf) ? '4h' : x.tf);          // which stream produced a signal
+const inView = x => view === 'all' || sOf(x) === view;
+const streamsCfg = () => ((S && S.config && S.config.streams) || []).slice().sort((a, b) => TFMIN[a.timeframe] - TFMIN[b.timeframe]);
 
 try { const t = localStorage.getItem('theme'); if (t) document.documentElement.dataset.theme = t; } catch(e) {}
 $('theme').onclick = () => {
@@ -178,13 +181,16 @@ async function loadBacktest() {
 }
 
 function renderRadar() {
-  const R = S.radar || {}, rows = Object.entries(R).map(([coin, r]) => {
+  if (view === 'all') return renderRadarAll();
+  $('radar').className = 'rgrid';
+  const sc = streamsCfg().find(x => x.name === view), tfn = sc ? sc.timeframe : view;
+  const R = ((S.radar_by_stream || {})[view]) || S.radar || {}, rows = Object.entries(R).map(([coin, r]) => {
     const px = live[coin] ?? r.price, up = r.trend === 'up';
     const trig = up ? r.long_trigger : r.short_trigger;
     const dist = Math.abs(trig / px - 1) * 100, crossed = up ? px > trig : px < trig;
     const blocked = !up && r.long_only;                          // e.g. BNB is long-only: no signal while the market is down
     const emaGap = r.ema200 ? Math.abs(px / r.ema200 - 1) * 100 : 99;
-    return {coin, px, up, trig, dist, crossed, blocked, emaGap, atr: r.atr, adx: r.adx, adxMin: r.adx_min || 0, longOnly: r.long_only,
+    return {coin, px, up, trig, dist, crossed, blocked, emaGap, tfn, atr: r.atr, adx: r.adx, adxMin: r.adx_min || 0, longOnly: r.long_only,
             sl: r.sl_atr || 2, tpR: r.tp_r || 4, trail: r.trail_atr || 0};
   }).sort((a, b) => (a.blocked - b.blocked) || (a.dist - b.dist));
   if (!rows.length) { $('radar').innerHTML = '<div class="empty card">Radar ka data abhi nahi.</div>'; return; }
@@ -208,10 +214,26 @@ function renderRadar() {
     return `<div class="card rcard"><div class="rtop"><span class="coin" style="font-size:18px">${esc(r.coin)}${r.longOnly ? ' <span class="badge" title="Is coin par sirf BUY signals">sirf long</span>' : ''}</span><span><b>${fmt(r.px)}</b></span></div>
       <div class="rtrend ${r.blocked || choppy ? '' : r.up ? 'up' : 'dn'}">${trendTxt}</div>
       ${r.blocked ? '<div class="sub">Market upar palte (price EMA200 ke upar jaye) to phir BUY level dekha jayega.</div>'
-        : `<div class="sub">Signal tab bane ga jab 4h candle <b>${fmt(r.trig)}</b> ke ${r.up ? 'upar' : 'neeche'} <b>band</b> ho.</div>`}
+        : `<div class="sub">Signal tab bane ga jab ${esc(r.tfn)} candle <b>${fmt(r.trig)}</b> ke ${r.up ? 'upar' : 'neeche'} <b>band</b> ho.</div>`}
       ${adxLine}<div class="rbar"><i style="width:${near}%"></i></div>${chip}${preview}
       <div class="rnow">Abhi: <b>koi trade nahi</b> - wait karo</div></div>`;
   }).join('');
+}
+
+function renderRadarAll() {
+  const sts = streamsCfg(), RB = S.radar_by_stream || {};
+  const coins = Object.keys(RB[(sts[0] || {}).name] || S.radar || {});
+  if (!coins.length) { $('radar').innerHTML = '<div class="empty card">Radar ka data abhi nahi.</div>'; return; }
+  const cell = (coin, name) => {
+    const r = (RB[name] || {})[coin]; if (!r) return '<td class="sub">-</td>';
+    const px = live[coin] ?? r.price, up = r.trend === 'up', trig = up ? r.long_trigger : r.short_trigger, dist = Math.abs(trig / px - 1) * 100;
+    if (!up && r.long_only) return '<td><span class="rchip">⛔ mandi, sirf BUY</span></td>';
+    const crossed = up ? px > trig : px < trig;
+    return `<td><span class="rchip ${crossed ? 'hot' : dist < 1 ? 'warm' : ''}">${up ? '📈 BUY' : '📉 SELL'} · ${crossed ? 'level paar' : dist.toFixed(1) + '% door'}</span></td>`;
+  };
+  $('radar').className = 'tablewrap';
+  $('radar').innerHTML = '<table><thead><tr><th>Coin</th><th>Price</th>' + sts.map(x => `<th>${esc(x.name)}</th>`).join('') + '</tr></thead><tbody>' +
+    coins.map(c => `<tr><td><b>${esc(c)}</b></td><td>${fmt(live[c] ?? (S.radar[c] || {}).price ?? 0)}</td>${sts.map(x => cell(c, x.name)).join('')}</tr>`).join('') + '</tbody></table>';
 }
 
 function fmtHMS(ms) {
@@ -219,13 +241,13 @@ function fmtHMS(ms) {
   const p = n => String(n).padStart(2, '0');
   return (d ? d + ' din ' : '') + p(h) + ':' + p(m) + ':' + p(sec);
 }
-function msTo(kind, ts) {
+function msTo(kind, ts, tfx) {
   const now = new Date();
-  if (kind === 'candle') { const step = TFMIN[tf] * 60000; return (Math.floor(now.getTime() / step) + 1) * step - now; }
+  if (kind === 'candle') { const step = TFMIN[tfx || '4h'] * 60000; return (Math.floor(now.getTime() / step) + 1) * step - now; }
   if (kind === 'bot') { const t = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), 6); return (t > now ? t : t + 3600e3) - now; }
   return new Date(ts) - now;                                                              // 'deadline'
 }
-function tick() { document.querySelectorAll('.cd').forEach(el => { el.textContent = fmtHMS(msTo(el.dataset.kind, el.dataset.ts)); }); }
+function tick() { document.querySelectorAll('.cd').forEach(el => { el.textContent = fmtHMS(msTo(el.dataset.kind, el.dataset.ts, el.dataset.tf)); }); }
 setInterval(tick, 1000);
 
 function nextCheck() { // 4h candle closes at 00,04,...UTC; bot runs ~6 min later
@@ -235,25 +257,31 @@ function nextCheck() { // 4h candle closes at 00,04,...UTC; bot runs ~6 min late
 }
 
 function render() {
-  const run = S.last_run || {}, st = S.stats || {}, ref = (S.config||{}).backtest_reference || {};
+  const run = S.last_run || {}, ref = (S.config||{}).backtest_reference || {};
+  const sc = streamsCfg().find(x => x.name === view);
+  const st = view === 'all' ? (S.stats || {}) : ((S.stats_by_stream || {})[view] || {closed: 0, open: 0});
+  const refExp = sc && sc.ref ? sc.ref.exp_R : ref.expectancy_R;
   const ageH = (Date.now() - new Date(S.updated)) / 3600e3;
   $('status').innerHTML = `Aakhri check: ${Math.round(ageH*60) < 120 ? Math.round(ageH*60) + ' min' : Math.round(ageH) + ' ghante'} pehle · ${(run.coins_checked||[]).length} coins` +
     (run.errors && run.errors.length ? ` · <span class="dn">${run.errors.length} error</span>` : '') + (ageH > 9 ? ' · <span class="warn">bot kaafi der se nahi chala</span>' : '');
-  const open = S.signals.filter(s => s.status === 'open');
+  const open = S.signals.filter(s => s.status === 'open' && inView(s));
+  const shown = view === 'all' ? streamsCfg() : streamsCfg().filter(x => x.name === view);
+  const cds = (shown.length ? shown : [{name: '4h', timeframe: '4h'}]).map(x => `<span>⏱ ${esc(x.name)} candle band hone mein: <b class="cd" data-kind="candle" data-tf="${esc(x.timeframe)}"></b></span>`).join('');
+  const where = view === 'all' ? 'kisi bhi timeframe par' : view + ' par';
   $('hero').innerHTML = open.length
-    ? `<div class="big up">🔔 ${open.length} signal active hai</div><div class="sub">Neeche steps follow karo. Har signal par WIN/LOSS aur baqi time live dikhta hai.</div><div class="cds"><span>⏱ Agli ${tf} candle band hone mein: <b class="cd" data-kind="candle"></b></span></div>`
-    : `<div class="big">😴 Abhi koi signal nahi</div><div class="sub">Wait karo. Bot market dekh raha hai, signal aate hi Telegram par aayega.</div>
-       <div class="cds"><span>⏱ Agli ${tf} candle band hone mein: <b class="cd" data-kind="candle"></b></span><span>🤖 Bot ka agla check: <b class="cd" data-kind="bot"></b></span></div>`;
+    ? `<div class="big up">🔔 ${open.length} signal active hai</div><div class="sub">Neeche steps follow karo. Har signal par WIN/LOSS aur baqi time live dikhta hai.</div><div class="cds">${cds}</div>`
+    : `<div class="big">😴 Abhi ${where} koi signal nahi</div><div class="sub">Wait karo. Bot market dekh raha hai, signal aate hi Telegram par aayega.</div>
+       <div class="cds">${cds}<span>🤖 Bot ka agla check: <b class="cd" data-kind="bot"></b></span></div>`;
   const card = (k, v, sub, cls='') => `<div class="card stat"><div class="k">${k}</div><div class="v ${cls}">${v}</div><div class="sub">${sub||''}</div></div>`;
-  const e = st.expectancy_R;
+  const e = st.expectancy_R, cl = S.signals.filter(x => x.status === 'closed' && inView(x));
   $('stats').innerHTML = st.closed ? [
     card('Band hue signals', st.closed, `${st.open||0} abhi khule`),
-    card('Jeete / Haare', `<span class="up">${S.signals.filter(x => x.status === 'closed' && x.R > 0).length}</span> / <span class="dn">${S.signals.filter(x => x.status === 'closed' && x.R <= 0).length}</span>`, 'WIN / LOSS'),
-    card('Kitne jeete', Math.round(st.win_rate*100)+'%', 'backtest: ~35-40%'),
+    card('Jeete / Haare', `<span class="up">${cl.filter(x => x.R > 0).length}</span> / <span class="dn">${cl.filter(x => x.R <= 0).length}</span>`, 'WIN / LOSS'),
+    card('Kitne jeete', Math.round(st.win_rate*100)+'%', 'backtest: ~30-40%'),
     card('Total natija', sgn(st.total_R)+'R', `account par ${sgn(st.equity_return_pct)}%`, st.total_R>0?'up':'dn'),
-    card('Har trade ka average', sgn(e)+'R', `backtest: ${sgn(ref.expectancy_R||0)}R`, e>0?'up':'dn'),
+    card('Har trade ka average', sgn(e)+'R', `backtest: ${sgn(refExp||0)}R`, e>0?'up':'dn'),
     card('Sab se bara nuksan', st.max_drawdown_pct+'%', 'peak se neeche', st.max_drawdown_pct<-15?'dn':''),
-  ].join('') : `<div class="card empty" style="grid-column:1/-1">Abhi koi signal band nahi hua. Pehle natije aane mein kuch din lagte hain (signal 2-4 hafte mein aate hain).</div>`;
+  ].join('') : `<div class="card empty" style="grid-column:1/-1">${view === 'all' ? '' : esc(view) + ' ka '}abhi koi signal band nahi hua. Pehle natije aane mein kuch din lagte hain.</div>`;
   renderOpen(); renderRadar(); renderCurve(); renderHist(); renderWatch();
 }
 
@@ -267,7 +295,7 @@ function verdict(r, s) {
 }
 
 function renderOpen() {
-  const open = S.signals.filter(s => s.status === 'open');
+  const open = S.signals.filter(s => s.status === 'open' && inView(s));
   if (!open.length) { $('open').innerHTML = ''; return; }
   $('open').innerHTML = open.map(s => {
     const long = s.side === 1, px = live[s.coin] ?? s.last_price, r = pnlR(s, px), v = verdict(r, s);
@@ -278,7 +306,7 @@ function renderOpen() {
     const stopGap = Math.abs(px - s.stop) / px * 100, tpGap = s.tp ? Math.abs(s.tp - px) / px * 100 : 0;
     const num = (n) => `<span class="val" data-copy="${raw(n)}" title="Copy">${fmt(n)}</span>`;
     return `<div class="card sig">
-      <div class="sig-h ${long?'long':'short'}"><span class="coin">${esc(s.coin)}${s.mode==='early'?' <span class="badge" title="4h candle abhi band nahi hui - false signal ka chance zyada">⚡ JALDI</span>':''}</span><span class="side ${long?'up':'dn'}">${long?'LONG - BUY':'SHORT - SELL'}</span></div>
+      <div class="sig-h ${long?'long':'short'}"><span class="coin">${esc(s.coin)} <span class="badge" title="Kis timeframe stream ka signal">${esc(sOf(s))}</span>${s.mode==='early'?' <span class="badge" title="4h candle abhi band nahi hui - false signal ka chance zyada">⚡ JALDI</span>':''}</span><span class="side ${long?'up':'dn'}">${long?'LONG - BUY':'SHORT - SELL'}</span></div>
       <div class="wl ${gain >= 0 ? 'win' : 'loss'}">
         <div class="wl-big">${gain >= 0 ? '✅ WIN (abhi profit mein)' : '❌ LOSS (abhi nuksan mein)'} · ${sgn(pct.toFixed(2))}%</div>
         <div class="wl-row">Entry <b>${fmt(s.entry)}</b> → Abhi <b>${fmt(px)}</b> = <b>${gain >= 0 ? '+' : '-'}${fmt(Math.abs(px - s.entry))}</b> (${long ? 'upar jana = profit' : 'neeche jana = profit'})</div>
@@ -308,10 +336,10 @@ function renderOpen() {
 
 async function drawChart(s) {
   const el = document.getElementById('ch-' + s.id); if (!el) return;
-  const kkey = s.coin + tf, lim = {'15m': 200, '1h': 120, '4h': 70}[tf];
+  const ctf = s.tf || '4h', kkey = s.coin + ctf, lim = {'15m': 200, '30m': 150, '1h': 120, '2h': 100, '4h': 70}[ctf];
   if (!klines[kkey]) {
     for (const h of HOSTS) {
-      try { const r = await fetch(`${h}/api/v3/klines?symbol=${s.coin}USDT&interval=${tf}&limit=${lim}`); if (r.ok) { klines[kkey] = await r.json(); break; } } catch(e) {}
+      try { const r = await fetch(`${h}/api/v3/klines?symbol=${s.coin}USDT&interval=${ctf}&limit=${lim}`); if (r.ok) { klines[kkey] = await r.json(); break; } } catch(e) {}
     }
   }
   const k = klines[kkey]; if (!k) { el.innerHTML = '<div class="sub" style="text-align:center">(chart ke liye Binance price load nahi hui)</div>'; return; }
@@ -329,12 +357,12 @@ async function drawChart(s) {
     g += `<line x1="${x(i)}" x2="${x(i)}" y1="${y(+c[2])}" y2="${y(+c[3])}" stroke="${col}"/><rect x="${x(i)-cw*.32}" y="${y(Math.max(+c[1],+c[4]))}" width="${cw*.64}" height="${Math.max(1,Math.abs(y(+c[1])-y(+c[4])))}" fill="${col}"/>`; });
   g += (s.tp ? line(s.tp, up, 'TARGET') : '') + line(s.entry, mute, 'ENTRY') + line(s.stop, dn, s.trail_dist ? 'TRAIL STOP' : 'STOP');
   if (si >= 0) g += `<line x1="${x(si)}" x2="${x(si)}" y1="${T}" y2="${H-B}" stroke="${mute}" stroke-dasharray="2 3"/><text x="${x(si)+4}" y="${T+10}" fill="${mute}" font-size="11">signal</text>`;
-  g += `<text x="${L+2}" y="${H-3}" fill="${mute}" font-size="11">${tf} candles</text>`;
+  g += `<text x="${L+2}" y="${H-3}" fill="${mute}" font-size="11">${ctf} candles</text>`;
   el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(s.coin)} chart">${g}</svg>`;
 }
 
 function renderCurve() {
-  const c = S.signals.filter(s => s.status === 'closed').sort((a,b) => a.exit_time.localeCompare(b.exit_time));
+  const c = S.signals.filter(s => s.status === 'closed' && inView(s)).sort((a,b) => a.exit_time.localeCompare(b.exit_time));
   if (c.length < 2) { $('curve').innerHTML = '<div class="empty">Account ka graph pehle 2 signals band hone ke baad aayega.</div>'; return; }
   let eq = 1; const pts = [1]; c.forEach(s => { eq *= 1 + s.R * s.risk_pct / 100; pts.push(eq); });
   const W = 720, H = 200, P = 40, mn = Math.min(...pts, 1), mx = Math.max(...pts, 1), span = (mx - mn) || .01;
@@ -353,12 +381,12 @@ function renderHist() {
   const coins = [...new Set(S.signals.map(s => s.coin))].sort();
   const sel = $('fCoin'); if (sel.options.length === 1) coins.forEach(c => sel.add(new Option(c, c)));
   const fc = sel.value, fs = $('fSide').value;
-  const rows = S.signals.filter(s => s.status === 'closed' && (!fc || s.coin === fc) && (!fs || s.side == fs)).sort((a,b) => b.exit_time.localeCompare(a.exit_time));
+  const rows = S.signals.filter(s => s.status === 'closed' && inView(s) && (!fc || s.coin === fc) && (!fs || s.side == fs)).sort((a,b) => b.exit_time.localeCompare(a.exit_time));
   $('histCount').textContent = rows.length + ' signals';
   if (!rows.length) { $('hist').innerHTML = '<div class="empty">Abhi kuch band nahi hua.</div>'; return; }
   const why = {target: '✅ target', stop: '❌ stop', trail: '🔒 trailing stop', time: '⏱ deadline'};
-  $('hist').innerHTML = '<table><thead><tr><th>Band hua</th><th>Coin</th><th>Side</th><th>Entry</th><th>Exit</th><th>Kaise</th><th>Natija</th></tr></thead><tbody>' +
-    rows.slice(0, 100).map(s => `<tr><td>${dt(s.exit_time).slice(0,16)}</td><td><b>${esc(s.coin)}</b></td>
+  $('hist').innerHTML = '<table><thead><tr><th>Band hua</th><th>Coin</th><th>TF</th><th>Side</th><th>Entry</th><th>Exit</th><th>Kaise</th><th>Natija</th></tr></thead><tbody>' +
+    rows.slice(0, 100).map(s => `<tr><td>${dt(s.exit_time).slice(0,16)}</td><td><b>${esc(s.coin)}</b></td><td>${esc(sOf(s))}</td>
     <td><span class="badge ${s.side===1?'long':'short'}">${s.side===1?'LONG':'SHORT'}${s.mode==='early'?' ⚡':''}</span></td><td>${fmt(s.entry)}</td><td>${fmt(s.exit_price)}</td>
     <td>${why[s.exit_reason]||esc(s.exit_reason)}</td><td class="${s.R>0?'up':'dn'}"><b>${s.R>0?'✅ WIN':'❌ LOSS'} ${sgn(s.R.toFixed(2))}R</b></td></tr>`).join('') + '</tbody></table>';
 }
@@ -366,7 +394,8 @@ $('fCoin').onchange = $('fSide').onchange = () => S && renderHist();
 
 function renderWatch() {
   const c = S.config; if (!c) return;
-  $('watch').innerHTML = `<div class="sub" style="margin-bottom:6px">${esc(c.timeframe)} candles · Donchian(${c.strategy.n}) breakout · stop ${c.strategy.sl_atr} ATR · target ${c.strategy.tp_r}R · har signal par ${c.risk.per_trade_pct}% risk, ek waqt mein max ${c.risk.max_open_risk_pct}%</div>` +
+  $('watch').innerHTML = `<div class="sub" style="margin-bottom:6px">Har signal par ${c.risk.per_trade_pct}% risk (1h/2h par aadha), ek waqt mein max ${c.risk.max_open_risk_pct}% total risk.</div>` +
+    (c.streams || []).map(x => `<div style="margin:4px 0"><b>${esc(x.name)}</b> <span class="sub">Donchian(${x.strategy.n}) breakout · stop ${x.strategy.sl_atr} ATR · target ${x.strategy.tp_r}R · ${x.strategy.allow_short === false ? 'sirf BUY' : 'BUY + SELL'} · risk ${x.risk_multiplier}×</span></div>`).join('') + '<div style="height:6px"></div>' +
     Object.entries(c.groups).map(([g, v]) => `<div style="margin:6px 0"><b>${esc(g)}</b> <span class="sub">${v.enabled ? 'ON' : 'OFF'}</span><br>` +
       v.coins.map(x => `<span class="chip ${v.enabled?'':'off'}">${esc(x)}</span>`).join('') + '</div>').join('') +
     '<div class="sub" style="margin-top:6px">Group on/off karna ho to config.yaml mein enabled: true/false badlo.</div>';

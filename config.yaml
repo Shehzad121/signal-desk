@@ -18,7 +18,7 @@ strategy:            # 4h Donchian breakout + EMA200 trend filter (best walk-for
 
 risk:
   per_trade_pct: 0.5   # % of account risked per signal
-  max_open_risk_pct: 2 # no new signal if total open risk would exceed this
+  max_open_risk_pct: 3 # no new signal if total open risk would exceed this (3 streams can overlap)
   max_leverage: 3
 
 costs:               # used when scoring signals (futures taker fee + slippage, per side)
@@ -47,6 +47,30 @@ groups:
     enabled: false
     risk_multiplier: 0.5
     coins: [SHIB, PEPE, WIF, BONK, FLOKI]
+
+# Each stream = one timeframe with its own best settings (found by walk-forward search, see mtf_search.py).
+# Channel `n` is ~1 week of candles on every timeframe. 1h/2h are LONG-ONLY (their shorts were weaker) and use half risk.
+streams:
+  - name: 4h
+    timeframe: 4h
+    enabled: true
+    main: true            # the original stream: uses the top-level `strategy`, group overrides (BNB trailing) and the 15-min early alerts
+    early: true
+    group_overrides: true
+    risk_multiplier: 1.0
+    ref: {exp_R: 0.12, pf: 1.2}
+  - name: 2h
+    timeframe: 2h
+    enabled: true
+    risk_multiplier: 0.5
+    strategy: {n: 80, adx_min: 0, sl_atr: 2, tp_r: 4, max_hold_days: 3, allow_short: false}
+    ref: {exp_R: 0.18, pf: 1.3}
+  - name: 1h
+    timeframe: 1h
+    enabled: true
+    risk_multiplier: 0.5
+    strategy: {n: 160, adx_min: 0, sl_atr: 2, tp_r: 4, max_hold_days: 3, allow_short: false}
+    ref: {exp_R: 0.15, pf: 1.23}
 
 backtest_reference:  # what the backtest expected, shown on the dashboard to compare with live results
   expectancy_R: 0.10

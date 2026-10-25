@@ -8,7 +8,7 @@ import pandas as pd
 DATA_DIR = Path(__file__).parent / "data"
 EXCHANGES = ["binance", "bybit", "okx", "kucoin", "gate", "bitget", "kraken"]  # fallback order (several are geo-blocked from the US, where GitHub runs)
 _PREFERRED = None  # exchange that worked last (so blocked ones are not retried for every coin)
-TF_MS = {"15m": 900_000, "1h": 3_600_000, "4h": 14_400_000, "1d": 86_400_000}
+TF_MS = {"15m": 900_000, "30m": 1_800_000, "1h": 3_600_000, "2h": 7_200_000, "4h": 14_400_000, "1d": 86_400_000}
 
 
 def _cache_path(symbol: str, tf: str) -> Path:

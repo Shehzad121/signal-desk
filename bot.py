@@ -25,7 +25,7 @@ import data_loader
 from strategies import adx, atr, donchian, ema
 
 ROOT = Path(__file__).parent
-TF_MIN = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}
+TF_MIN = {"15m": 15, "30m": 30, "1h": 60, "2h": 120, "4h": 240, "1d": 1440}
 
 
 # ----------------------------------------------------------------------------- config / data
@@ -48,7 +48,13 @@ def get_candles(coin, cfg, asof, offline, tf=None):
     sym, tf = f"{coin}/USDT", tf or cfg["timeframe"]
     if offline:
         if (coin, tf) not in _OFFLINE:
-            _OFFLINE[(coin, tf)] = data_loader.load(sym, tf, refresh=False)
+            src = {"30m": ("15m", "30min"), "2h": ("1h", "2h")}.get(tf)
+            if src:
+                d = data_loader.load(sym, src[0], refresh=False)
+                _OFFLINE[(coin, tf)] = d.resample(src[1]).agg({"open": "first", "high": "max", "low": "min", "close": "last",
+                                                                 "volume": "sum"}).dropna()
+            else:
+                _OFFLINE[(coin, tf)] = data_loader.load(sym, tf, refresh=False)
         df, ex = _OFFLINE[(coin, tf)], "cache"
     else:
         df, ex = data_loader.fetch_recent(sym, tf, 700 if tf != "15m" else 400)
@@ -119,6 +125,7 @@ def _build(coin, group, mult, side, close, a, cand, tf, mode, cfg, open_risk):
     stop0 = entry_eff - side * dist
     sig = dict(
         id=f"{coin}-{cand:%Y%m%d%H%M}-{tf}", symbol=f"{coin}/USDT", coin=coin, group=group, tf=tf, mode=mode,
+        stream=cfg.get("stream", tf),
         side=side, status="open", signal_candle=cand.isoformat(), signal_time=end.isoformat(),
         entry=close, entry_eff=entry_eff, stop=stop0, dist=dist, risk_pct=round(eff * 100, 3),
         size_pct=round(eff / (dist / entry_eff) * 100, 1), bars_held=0, last_price=close,
@@ -218,7 +225,7 @@ def msg_new(s, cfg):
     stop0 = s.get("stop0", s["stop"])
     sp = (stop0 / s["entry"] - 1) * 100
     dl = pd.Timestamp(s["deadline"]).strftime("%d %b %H:%M UTC")
-    head = (f"{icon} <b>NAYA SIGNAL: {d} {html.escape(s['symbol'])}</b>\n\n"
+    head = (f"{icon} <b>NAYA SIGNAL [{s.get('stream', s.get('tf'))}]: {d} {html.escape(s['symbol'])}</b>\n\n"
             f"1️⃣ <b>Entry:</b> abhi market price par {'buy' if long_ else 'sell/short'} karo (≈ <code>{fmt(s['entry'])}</code>)\n"
             f"2️⃣ <b>Stop-loss</b> foran lagao: <code>{fmt(stop0)}</code> ({sp:+.1f}%)\n")
     if s.get("trail_dist"):
@@ -243,7 +250,7 @@ def msg_closed(s):
     why = {"target": "Target lag gaya (profit)", "stop": "Stop-loss lag gaya (nuksan)",
            "trail": "Trailing stop lag gaya (profit lock hua)",
            "time": "Deadline poori - agar position khuli hai to ab band kar do"}[s["exit_reason"]]
-    return (f"{icon} <b>{d} {html.escape(s['symbol'])} band</b>\n{why}\n"
+    return (f"{icon} <b>[{s.get('stream', s.get('tf'))}] {d} {html.escape(s['symbol'])} band</b>\n{why}\n"
             f"Exit ≈ <code>{fmt(s['exit_price'])}</code> · natija <b>{s['R']:+.2f}R</b> "
             f"(1R = jitna risk liya tha)")
 
@@ -269,6 +276,17 @@ def msg_summary(state):
 
 
 # ----------------------------------------------------------------------------- main
+def get_streams(cfg):
+    """Each stream = one timeframe with its own strategy settings, risk share and track record."""
+    base = [dict(name=cfg["timeframe"], timeframe=cfg["timeframe"], group_overrides=True, early=True)]
+    return [{"enabled": True, "risk_multiplier": 1.0, "strategy": {}, **st} for st in (cfg.get("streams") or base)
+            if st.get("enabled", True)]
+
+
+def stream_of(sig):
+    return sig.get("stream") or ("4h" if sig.get("tf") in ("4h", "15m") else sig.get("tf"))
+
+
 def main():
     try:
         sys.stdout.reconfigure(encoding="utf-8")  # emoji in messages on Windows consoles
@@ -281,7 +299,7 @@ def main():
     ap.add_argument("--state", default=str(ROOT / "docs" / "signals.json"))
     ap.add_argument("--no-summary", action="store_true")
     ap.add_argument("--run-type", choices=["close", "early"], default="close",
-                    help="close = runs right after a 4h candle closes; early = runs every ~15 min (only needed for signal_mode early/both)")
+                    help="close = hourly run (checks every stream whose candle just closed); early = every ~15 min (only for signal_mode early/both)")
     args = ap.parse_args()
 
     cfg = load_config()
@@ -291,14 +309,16 @@ def main():
     state = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {"signals": []}
     first_run = not state.get("welcomed", False)   # Telegram "bot started" message goes out once
     signals = state["signals"]
-    radar = {}
+    radar_by = {}
     coins = enabled_coins(cfg)
+    streams = get_streams(cfg)
     run = dict(time=now.isoformat(), coins_checked=[], errors=[], new=[], closed=[], notes=[], exchange=None)
     msgs = []
 
     if first_run:
         msgs.append("🤖 <b>Signal bot started</b>\nWatching: " + ", ".join(c for c, _, _ in coins) +
-                    f"\nTimeframe {cfg['timeframe']} · Donchian({cfg['strategy']['n']}) breakout · signals only, no auto-trading.")
+                    "\nStreams: " + " · ".join(f"{s['name']} (Donchian {({**cfg['strategy'], **s['strategy']})['n']})" for s in streams) +
+                    "\nSignals only, no auto-trading.")
 
     mode = cfg.get("signal_mode", "close")
     if mode not in ("close", "early", "both"):
@@ -306,29 +326,38 @@ def main():
     if args.run_type == "early" and mode == "close":
         print("signal_mode is 'close' - the 15-minute run has nothing to do.")
         return
-    check_close = args.run_type == "close" and mode in ("close", "both")
-    check_early = mode in ("early", "both")
 
-    for coin, group, mult in coins:
-        try:
-            # a group may override strategy settings (e.g. BNB: long-only + ADX filter) via `strategy:` in config.yaml
-            ccfg = {**cfg, "strategy": {**cfg["strategy"], **cfg["groups"][group].get("strategy", {})}}
-            df, ex = get_candles(coin, cfg, asof, args.offline)
-            run["exchange"] = ex
-            if len(df) < 300:
-                raise RuntimeError("not enough candles")
-            run["coins_checked"].append(coin)
-            has15 = any(x["status"] == "open" and x["coin"] == coin and x.get("tf") == "15m" for x in signals)
-            df15 = get_candles(coin, cfg, asof, args.offline, "15m")[0] if (check_early or has15) else None
-            cs = ccfg["strategy"]
-            n = cs["n"]                            # "radar": how far is each coin from triggering a signal?
-            ema200 = float(df["close"].ewm(span=200, adjust=False).mean().iloc[-1])
-            radar[coin] = dict(price=float(df["close"].iloc[-1]), ema200=ema200, trend="up" if df["close"].iloc[-1] > ema200 else "down",
-                               long_trigger=float(df["high"].iloc[-n:].max()), short_trigger=float(df["low"].iloc[-n:].min()),
-                               atr=float(atr(df).iloc[-1]), adx=float(adx(df).iloc[-1]), adx_min=cs.get("adx_min", 0),
-                               long_only=not cs.get("allow_short", True), sl_atr=cs["sl_atr"], tp_r=cs.get("tp_r"), trail_atr=cs.get("trail_atr", 0))
-            for s_ in signals:                     # 1) update open signals of this coin
-                if s_["status"] == "open" and s_["coin"] == coin:
+    for st in streams:
+        tf, sname = st["timeframe"], st["name"]
+        is_main = bool(st.get("early"))                        # only the main (4h) stream has the 15-minute early alerts
+        check_close = args.run_type == "close" and (mode in ("close", "both") if is_main else True)
+        check_early = is_main and mode in ("early", "both")
+        if args.run_type == "early" and not check_early:
+            continue
+        fresh_lim = pd.Timedelta(minutes=max(45, min(120, 0.6 * TF_MIN[tf])))   # a late run must not emit a stale entry
+        radar = radar_by.setdefault(sname, {})
+        for coin, group, gmult in coins:
+            try:
+                ccfg = {**cfg, "timeframe": tf, "stream": sname, "strategy": {**cfg["strategy"], **st["strategy"]}}
+                if st.get("group_overrides"):   # a group may override settings (e.g. BNB: trailing stop) on the main stream
+                    ccfg["strategy"] = {**ccfg["strategy"], **cfg["groups"][group].get("strategy", {})}
+                mult = gmult * float(st["risk_multiplier"])
+                df, ex = get_candles(coin, ccfg, asof, args.offline)
+                run["exchange"] = ex
+                if len(df) < 300:
+                    raise RuntimeError(f"not enough {tf} candles")
+                if coin not in run["coins_checked"]:
+                    run["coins_checked"].append(coin)
+                mine = [x for x in signals if x["status"] == "open" and x["coin"] == coin and stream_of(x) == sname]
+                df15 = get_candles(coin, ccfg, asof, args.offline, "15m")[0] if (check_early or any(x.get("tf") == "15m" for x in mine)) else None
+                cs = ccfg["strategy"]
+                n = cs["n"]                            # "radar": how far is each coin from triggering a signal?
+                ema200 = float(df["close"].ewm(span=200, adjust=False).mean().iloc[-1])
+                radar[coin] = dict(price=float(df["close"].iloc[-1]), ema200=ema200, trend="up" if df["close"].iloc[-1] > ema200 else "down",
+                                   long_trigger=float(df["high"].iloc[-n:].max()), short_trigger=float(df["low"].iloc[-n:].min()),
+                                   atr=float(atr(df).iloc[-1]), adx=float(adx(df).iloc[-1]), adx_min=cs.get("adx_min", 0),
+                                   long_only=not cs.get("allow_short", True), sl_atr=cs["sl_atr"], tp_r=cs.get("tp_r"), trail_atr=cs.get("trail_atr", 0))
+                for s_ in mine:                        # 1) update this stream's open signals of this coin
                     s_.update(evaluate(s_, df15 if s_.get("tf") == "15m" else df, ccfg))
                     if s_["status"] == "closed":
                         run["closed"].append(s_["id"])
@@ -338,29 +367,33 @@ def main():
                         if abs(s_["stop"] - s_.get("notified_stop", s_["stop0"])) >= step:
                             s_["notified_stop"] = s_["stop"]
                             msgs.append(msg_trail(s_))
-            if any(x["status"] == "open" and x["coin"] == coin for x in signals):
-                continue
-            open_risk = sum(x["risk_pct"] for x in signals if x["status"] == "open")
-            fresh = (now - (df.index[-1] + pd.Timedelta(minutes=TF_MIN[cfg["timeframe"]]))) <= pd.Timedelta(hours=2)
-            if check_close and not fresh:
-                run["notes"].append(f"{coin}: last 4h candle closed more than 2h ago - no new close-signal check")
-            sig, note = (new_signal(coin, group, mult, df, ccfg, open_risk) if (check_close and fresh) else (None, None))   # 2) new signal?
-            if sig is None and note is None and check_early:
-                sig, note = early_signal(coin, group, mult, df, df15, ccfg, open_risk)
-            if note:
-                run["notes"].append(note)
-            if sig and not any(x["id"] == sig["id"] for x in signals):
-                signals.append(sig)
-                run["new"].append(sig["id"])
-                msgs.append(msg_new(sig, ccfg))
-        except Exception as e:
-            run["errors"].append(f"{coin}: {e}")
+                if any(x["status"] == "open" and x["coin"] == coin and stream_of(x) == sname for x in signals):
+                    continue
+                open_risk = sum(x["risk_pct"] for x in signals if x["status"] == "open")
+                fresh = (now - (df.index[-1] + pd.Timedelta(minutes=TF_MIN[tf]))) <= fresh_lim
+                sig, note = (new_signal(coin, group, mult, df, ccfg, open_risk) if (check_close and fresh) else (None, None))   # 2) new signal?
+                if sig is None and note is None and check_early:
+                    sig, note = early_signal(coin, group, mult, df, df15, ccfg, open_risk)
+                if note:
+                    run["notes"].append(note)
+                if sig and not any(x["id"] == sig["id"] for x in signals):
+                    signals.append(sig)
+                    run["new"].append(sig["id"])
+                    msgs.append(msg_new(sig, ccfg))
+            except Exception as e:
+                run["errors"].append(f"{sname}/{coin}: {e}")
 
+    main_name = next((s["name"] for s in streams if s.get("early")), streams[0]["name"])
     state.update(
-        updated=now.isoformat(), last_run=run, signals=signals, stats=compute_stats(signals), radar=radar,
+        updated=now.isoformat(), last_run=run, signals=signals, stats=compute_stats(signals),
+        radar=radar_by.get(main_name) or state.get("radar", {}),
+        radar_by_stream={**state.get("radar_by_stream", {}), **radar_by},
+        stats_by_stream={s["name"]: compute_stats([x for x in signals if stream_of(x) == s["name"]]) for s in streams},
         stats_by_mode={m: compute_stats([x for x in signals if x.get('mode', 'close') == m]) for m in ('close', 'early')},
         welcomed=state.get("welcomed", False) or (first_run and not args.dry_run and bool(os.environ.get("TELEGRAM_BOT_TOKEN"))),
         config=dict(timeframe=cfg["timeframe"], signal_mode=mode, strategy=cfg["strategy"], risk=cfg["risk"],
+                    streams=[dict(name=s["name"], timeframe=s["timeframe"], risk_multiplier=s["risk_multiplier"],
+                                  strategy={**cfg["strategy"], **s["strategy"]}, ref=s.get("ref"), main=bool(s.get("early"))) for s in streams],
                     groups={g: dict(enabled=v["enabled"], coins=v["coins"], **({"strategy": v["strategy"]} if v.get("strategy") else {}))
                             for g, v in cfg["groups"].items()},
                     backtest_reference=cfg["backtest_reference"]),
