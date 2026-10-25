@@ -6,7 +6,7 @@ timeframe: 4h
 #   early = alert within ~15 min of price crossing the channel   (earlier, ~30% weaker edge, more false alarms)
 #   both  = close signals + early alerts
 # "early"/"both" also need the 15-minute workflow (.github/workflows/early.yml) enabled.
-signal_mode: close
+signal_mode: both
 
 strategy:            # 4h Donchian breakout + EMA200 trend filter (best walk-forward result)
   n: 40

@@ -52,6 +52,13 @@ select{background:var(--card);color:var(--ink);border:1px solid var(--line);bord
 details{margin-top:14px}summary{cursor:pointer;font-weight:650}
 details ol{margin:10px 0 0;padding-left:20px}details li{margin:6px 0}
 button.theme{background:var(--card);border:1px solid var(--line);color:var(--mute);border-radius:10px;padding:4px 11px;cursor:pointer;font:inherit;font-size:13px}
+.wl{margin:0;padding:12px 16px;border-bottom:1px solid var(--line)}
+.wl.win{background:var(--upbg)}.wl.loss{background:var(--dnbg)}
+.wl-big{font-size:20px;font-weight:800}
+.wl-row{font-size:14px;margin-top:3px;font-variant-numeric:tabular-nums}
+.cd{font-variant-numeric:tabular-nums;font-weight:800}
+.cds{display:flex;gap:10px;flex-wrap:wrap;justify-content:center;margin-top:10px}
+.cds span{background:var(--card);border-radius:12px;padding:6px 12px;font-size:13px}
 .warnbox{background:var(--dnbg);border-color:transparent;font-size:14px;margin-bottom:12px}
 .rgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:10px}
 .rcard{padding:14px}
@@ -198,6 +205,20 @@ function renderRadar() {
   }).join('');
 }
 
+function fmtHMS(ms) {
+  ms = Math.max(0, ms); const t = Math.floor(ms / 1000), d = Math.floor(t / 86400), h = Math.floor(t % 86400 / 3600), m = Math.floor(t % 3600 / 60), sec = t % 60;
+  const p = n => String(n).padStart(2, '0');
+  return (d ? d + ' din ' : '') + p(h) + ':' + p(m) + ':' + p(sec);
+}
+function msTo(kind, ts) {
+  const now = new Date();
+  if (kind === 'candle') { const nh = (Math.floor(now.getUTCHours() / 4) + 1) * 4; return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), nh, 0) - now; }
+  if (kind === 'bot') { const t = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), 6); return (t > now ? t : t + 3600e3) - now; }
+  return new Date(ts) - now;                                                              // 'deadline'
+}
+function tick() { document.querySelectorAll('.cd').forEach(el => { el.textContent = fmtHMS(msTo(el.dataset.kind, el.dataset.ts)); }); }
+setInterval(tick, 1000);
+
 function nextCheck() { // 4h candle closes at 00,04,...UTC; bot runs ~6 min later
   const now = new Date(), h = now.getUTCHours(), nh = (Math.floor(h/4)+1)*4;
   const t = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), nh, 6));
@@ -211,12 +232,14 @@ function render() {
     (run.errors && run.errors.length ? ` · <span class="dn">${run.errors.length} error</span>` : '') + (ageH > 9 ? ' · <span class="warn">bot kaafi der se nahi chala</span>' : '');
   const open = S.signals.filter(s => s.status === 'open');
   $('hero').innerHTML = open.length
-    ? `<div class="big up">🔔 ${open.length} signal active hai</div><div class="sub">Neeche steps follow karo. Agla check ${dur(nextCheck())} mein.</div>`
-    : `<div class="big">😴 Abhi koi signal nahi</div><div class="sub">Wait karo. Bot market dekh raha hai, signal aate hi Telegram par aayega.<br>Agla check ${dur(nextCheck())} mein.</div>`;
+    ? `<div class="big up">🔔 ${open.length} signal active hai</div><div class="sub">Neeche steps follow karo. Har signal par WIN/LOSS aur baqi time live dikhta hai.</div><div class="cds"><span>⏱ Agli 4h candle band hone mein: <b class="cd" data-kind="candle"></b></span></div>`
+    : `<div class="big">😴 Abhi koi signal nahi</div><div class="sub">Wait karo. Bot market dekh raha hai, signal aate hi Telegram par aayega.</div>
+       <div class="cds"><span>⏱ Agli 4h candle band hone mein: <b class="cd" data-kind="candle"></b></span><span>🤖 Bot ka agla check: <b class="cd" data-kind="bot"></b></span></div>`;
   const card = (k, v, sub, cls='') => `<div class="card stat"><div class="k">${k}</div><div class="v ${cls}">${v}</div><div class="sub">${sub||''}</div></div>`;
   const e = st.expectancy_R;
   $('stats').innerHTML = st.closed ? [
     card('Band hue signals', st.closed, `${st.open||0} abhi khule`),
+    card('Jeete / Haare', `<span class="up">${S.signals.filter(x => x.status === 'closed' && x.R > 0).length}</span> / <span class="dn">${S.signals.filter(x => x.status === 'closed' && x.R <= 0).length}</span>`, 'WIN / LOSS'),
     card('Kitne jeete', Math.round(st.win_rate*100)+'%', 'backtest: ~35-40%'),
     card('Total natija', sgn(st.total_R)+'R', `account par ${sgn(st.equity_return_pct)}%`, st.total_R>0?'up':'dn'),
     card('Har trade ka average', sgn(e)+'R', `backtest: ${sgn(ref.expectancy_R||0)}R`, e>0?'up':'dn'),
@@ -242,9 +265,18 @@ function renderOpen() {
     const left = s.deadline ? dur(new Date(s.deadline) - Date.now()) : '';
     const trailing = !!s.trail_dist, sp = ((trailing ? s.stop0 : s.stop) / s.entry - 1) * 100, tpp = s.tp ? (s.tp / s.entry - 1) * 100 : 0;
     const rate = trailing ? Math.max(0.1, Math.min(10, s.trail_dist / s.entry * 100)) : 0;
+    const gain = s.side * (px - s.entry), pct = s.side * (px / s.entry - 1) * 100;
+    const stopGap = Math.abs(px - s.stop) / px * 100, tpGap = s.tp ? Math.abs(s.tp - px) / px * 100 : 0;
     const num = (n) => `<span class="val" data-copy="${raw(n)}" title="Copy">${fmt(n)}</span>`;
     return `<div class="card sig">
       <div class="sig-h ${long?'long':'short'}"><span class="coin">${esc(s.coin)}${s.mode==='early'?' <span class="badge" title="4h candle abhi band nahi hui - false signal ka chance zyada">⚡ JALDI</span>':''}</span><span class="side ${long?'up':'dn'}">${long?'LONG - BUY':'SHORT - SELL'}</span></div>
+      <div class="wl ${gain >= 0 ? 'win' : 'loss'}">
+        <div class="wl-big">${gain >= 0 ? '✅ WIN (abhi profit mein)' : '❌ LOSS (abhi nuksan mein)'} · ${sgn(pct.toFixed(2))}%</div>
+        <div class="wl-row">Entry <b>${fmt(s.entry)}</b> → Abhi <b>${fmt(px)}</b> = <b>${gain >= 0 ? '+' : '-'}${fmt(Math.abs(px - s.entry))}</b> (${long ? 'upar jana = profit' : 'neeche jana = profit'})</div>
+        <div class="wl-row">Stop-loss tak: <b>${stopGap.toFixed(2)}%</b>${s.tp ? ` · Target tak: <b>${tpGap.toFixed(2)}%</b>` : ' · Target nahi (trailing stop)'}</div>
+        <div class="wl-row">⏳ Baqi time: <b class="cd" data-kind="deadline" data-ts="${esc(s.deadline || '')}"></b> <span class="sub">(isse pehle stop/target na lage to band kar do)</span></div>
+        <div class="sub">WIN/LOSS abhi ka hai, trade band hone tak badal sakta hai.</div>
+      </div>
       <div class="pnl ${v[2]}">${v[0]} · ${sgn(r.toFixed(2))}R<small>${v[1]}</small>
         <small>Abhi price: <b>${fmt(px)}</b> ${live[s.coin]?'<span class="up">(live, Binance USDT)</span>':'<span class="warn">(live nahi - bot ki aakhri candle ki price)</span>'} · Signal ki entry: <b>${fmt(s.entry)}</b> (${sgn(((px/s.entry-1)*100).toFixed(2))}%)</small></div>
       <ol class="steps">
@@ -262,6 +294,7 @@ function renderOpen() {
     try { navigator.clipboard.writeText(el.dataset.copy); el.classList.add('ok'); setTimeout(() => el.classList.remove('ok'), 800); } catch(e) {}
   });
   open.forEach(drawChart);
+  tick();
 }
 
 async function drawChart(s) {
@@ -316,7 +349,7 @@ function renderHist() {
   $('hist').innerHTML = '<table><thead><tr><th>Band hua</th><th>Coin</th><th>Side</th><th>Entry</th><th>Exit</th><th>Kaise</th><th>Natija</th></tr></thead><tbody>' +
     rows.slice(0, 100).map(s => `<tr><td>${dt(s.exit_time).slice(0,16)}</td><td><b>${esc(s.coin)}</b></td>
     <td><span class="badge ${s.side===1?'long':'short'}">${s.side===1?'LONG':'SHORT'}${s.mode==='early'?' ⚡':''}</span></td><td>${fmt(s.entry)}</td><td>${fmt(s.exit_price)}</td>
-    <td>${why[s.exit_reason]||esc(s.exit_reason)}</td><td class="${s.R>0?'up':'dn'}"><b>${sgn(s.R.toFixed(2))}R</b></td></tr>`).join('') + '</tbody></table>';
+    <td>${why[s.exit_reason]||esc(s.exit_reason)}</td><td class="${s.R>0?'up':'dn'}"><b>${s.R>0?'✅ WIN':'❌ LOSS'} ${sgn(s.R.toFixed(2))}R</b></td></tr>`).join('') + '</tbody></table>';
 }
 $('fCoin').onchange = $('fSide').onchange = () => S && renderHist();
 
